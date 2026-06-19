@@ -1,0 +1,24 @@
+{
+    "name": "zdanyildiz/hbc-mutabakat",
+    "description": "Deterministik Veri Mutabakat Modülü",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "smalot/pdfparser": "^2.10",
+        "phpoffice/phpspreadsheet": "^2.1"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^1.11"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Zekeriya Danyildiz"
+        }
+    ]
+}
