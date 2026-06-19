@@ -230,10 +230,10 @@ if ($dbEnabled) {
                                 <h3>El Terminali Dosyası</h3>
                                 <p>Sürükle-bırak veya tıklayarak seç</p>
                                 <span class="file-spec">.xlsx, .xls, .csv formatları</span>
-                                <div class="selected-file-info" style="display:none;">
-                                    <span class="file-name"></span>
-                                    <button type="button" class="remove-file-btn">&times;</button>
-                                </div>
+                            </div>
+                            <div class="selected-file-info" style="display:none;">
+                                <span class="file-name"></span>
+                                <button type="button" class="remove-file-btn">&times;</button>
                             </div>
                         </div>
 
@@ -245,10 +245,10 @@ if ($dbEnabled) {
                                 <h3>Mağaza PDF Çıktısı</h3>
                                 <p>Sürükle-bırak veya tıklayarak seç</p>
                                 <span class="file-spec">Sadece .pdf formatı</span>
-                                <div class="selected-file-info" style="display:none;">
-                                    <span class="file-name"></span>
-                                    <button type="button" class="remove-file-btn">&times;</button>
-                                </div>
+                            </div>
+                            <div class="selected-file-info" style="display:none;">
+                                <span class="file-name"></span>
+                                <button type="button" class="remove-file-btn">&times;</button>
                             </div>
                         </div>
                     </div>
@@ -377,7 +377,7 @@ if ($dbEnabled) {
 
         <!-- Footer -->
         <footer class="app-footer">
-            <p>&copy; <?= date('Y') ?> HBC Mutabakat. Deterministik Veri Karşılaştırma Modülü. PHP 8.3 & Linux optimize edilmiştir.</p>
+            <p>&copy; <?= date('Y') ?> HBC Mutabakat.</p>
         </footer>
     </div>
 

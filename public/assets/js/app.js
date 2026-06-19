@@ -64,12 +64,14 @@ document.addEventListener('DOMContentLoaded', () => {
             input.value = '';
             info.style.display = 'none';
             content.style.display = 'flex';
+            dropzone.classList.remove('has-file');
         });
 
         function showFile(name) {
             fileNameSpan.textContent = name;
             content.style.display = 'none';
             info.style.display = 'flex';
+            dropzone.classList.add('has-file');
         }
     }
 
