@@ -102,7 +102,8 @@ document.addEventListener('DOMContentLoaded', () => {
         storeName: '',
         matched: [],
         missingInStore: [],
-        extraInStore: []
+        extraInStore: [],
+        barcodeStores: {}
     };
 
     let activeFilter = 'all';
@@ -129,6 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentData.matched = data.result.matched;
                 currentData.missingInStore = data.result.missingInStore;
                 currentData.extraInStore = data.result.extraInStore;
+                currentData.barcodeStores = data.barcode_stores || {};
 
                 renderResults();
                 resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -181,8 +183,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (activeFilter === 'all' || activeFilter === 'missing') {
             currentData.missingInStore.forEach(barcode => {
                 if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
+                    const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
                     rowsHtml += `<tr class="row-missing" data-type="missing">
                         <td class="font-semibold">${escapeHtml(barcode)}</td>
+                        <td class="text-secondary">${escapeHtml(storeName)}</td>
                         <td><span class="badge badge-missing">Eksik</span></td>
                         <td class="text-muted">Terminalde okutulmuş ancak Mağaza PDF'inde bulunamadı.</td>
                     </tr>`;
@@ -195,8 +199,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (activeFilter === 'all' || activeFilter === 'extra') {
             currentData.extraInStore.forEach(barcode => {
                 if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
+                    const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
                     rowsHtml += `<tr class="row-extra" data-type="extra">
                         <td class="font-semibold">${escapeHtml(barcode)}</td>
+                        <td class="text-secondary">${escapeHtml(storeName)}</td>
                         <td><span class="badge badge-extra">Fazla</span></td>
                         <td class="text-muted">Mağaza PDF'inde mevcut ancak Terminalde okutulmamış.</td>
                     </tr>`;
@@ -209,8 +215,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (activeFilter === 'all' || activeFilter === 'matched') {
             currentData.matched.forEach(barcode => {
                 if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
+                    const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
                     rowsHtml += `<tr class="row-matched" data-type="matched">
                         <td class="font-semibold">${escapeHtml(barcode)}</td>
+                        <td class="text-secondary">${escapeHtml(storeName)}</td>
                         <td><span class="badge badge-matched">Eşleşti</span></td>
                         <td class="text-muted">Her iki listede de başarıyla eşleşti.</td>
                     </tr>`;

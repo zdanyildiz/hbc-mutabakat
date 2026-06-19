@@ -30,11 +30,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
     header('Content-Type: application/json; charset=utf-8');
     
     try {
-        $storeName = trim((string)($_POST['store_name'] ?? ''));
-        if ($storeName === '') {
-            $storeName = 'Sevkiyat - ' . date('d.m.Y H:i');
-        }
-        
         if (!isset($_FILES['excel_file']) || !isset($_FILES['pdf_file'])) {
             echo json_encode(['success' => false, 'message' => 'Lütfen hem Excel/CSV hem de PDF dosyasını yükleyin.']);
             exit;
@@ -59,7 +54,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         $pdfExtractor = new PdfExtractor();
         $reconciler = new Reconciler($excelExtractor, $pdfExtractor);
 
+        $storeName = trim((string)($_POST['store_name'] ?? ''));
+        if ($storeName === '') {
+            $storeName = $pdfExtractor->extractStoreName($pdfPath);
+        }
+
         $result = $reconciler->reconcile($excelPath, $pdfPath);
+
+        // Generate barcode to store mapping
+        $excelMap = $excelExtractor->extractMap($excelPath);
+        $pdfStoreName = $pdfExtractor->extractStoreName($pdfPath);
+        $barcodeStores = $excelMap;
+        foreach ($result->storeBarcodes as $barcode) {
+            if (!isset($barcodeStores[$barcode])) {
+                $barcodeStores[$barcode] = $pdfStoreName;
+            }
+        }
 
         $savedId = null;
         if ($dbEnabled) {
@@ -71,6 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
             'store_name' => $storeName,
             'saved_id' => $savedId,
             'result' => $result->toArray(),
+            'barcode_stores' => $barcodeStores,
         ]);
         exit;
     } catch (\Exception $e) {
@@ -217,8 +228,8 @@ if ($dbEnabled) {
                 
                 <form id="reconcileForm" class="reconcile-form">
                     <div class="form-group">
-                        <label for="store_name">Mağaza / Sevkiyat Adı</label>
-                        <input type="text" id="store_name" name="store_name" placeholder="Örn: Kadıköy Mağazası - Sevkiyat 24" required>
+                        <label for="store_name">Mağaza / Sevkiyat Adı <?= $dbEnabled ? '' : '<span class="optional-text">(İsteğe Bağlı)</span>' ?></label>
+                        <input type="text" id="store_name" name="store_name" placeholder="Örn: Kadıköy Mağazası - Sevkiyat 24" <?= $dbEnabled ? 'required' : '' ?>>
                     </div>
 
                     <div class="dropzones-container">
@@ -310,6 +321,7 @@ if ($dbEnabled) {
                         <thead>
                             <tr>
                                 <th>Barkod / Takip Numarası</th>
+                                <th>Mağaza Adı</th>
                                 <th>Durum</th>
                                 <th>Açıklama</th>
                             </tr>

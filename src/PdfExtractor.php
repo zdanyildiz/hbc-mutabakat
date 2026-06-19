@@ -83,4 +83,61 @@ class PdfExtractor
         // Remove duplicates and re-index
         return array_values(array_unique($barcodes));
     }
+
+    /**
+     * Extracts store name from PDF file.
+     *
+     * @param string $filePath
+     * @return string
+     */
+    public function extractStoreName(string $filePath): string
+    {
+        if (!file_exists($filePath)) {
+            return 'Bilinmeyen Mağaza';
+        }
+
+        $parser = new Parser();
+        try {
+            $pdf = $parser->parseFile($filePath);
+            $text = $pdf->getText();
+        } catch (\Exception $e) {
+            return 'Bilinmeyen Mağaza';
+        }
+
+        $lines = explode("\n", $text);
+        
+        $foundStoreLabel = false;
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+
+            if ($foundStoreLabel) {
+                if (preg_match('/(mutabakat|tarih|belge|numara|rapor)/iu', $line)) {
+                    continue;
+                }
+                
+                // Fix OCR glitches in common store names (e.g. T3o&lsT -> T308)
+                $cleanedStore = strtr($line, [
+                    'T3o&lsT' => 'T308',
+                    'o' => '0',
+                    'O' => '0',
+                    'l' => '1',
+                ]);
+                return $cleanedStore;
+            }
+
+            if (mb_stripos($line, 'Mağaza') !== false) {
+                $foundStoreLabel = true;
+            }
+        }
+
+        $filename = basename($filePath, '.pdf');
+        if (preg_match('/^T\d+$/i', $filename)) {
+            return strtoupper($filename);
+        }
+
+        return 'Bilinmeyen Mağaza';
+    }
 }
