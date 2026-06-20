@@ -42,32 +42,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
             echo json_encode(['success' => false, 'message' => 'Excel/CSV dosyası yüklenirken hata oluştu.']);
             exit;
         }
-        if ($pdfFile['error'] !== UPLOAD_ERR_OK) {
-            echo json_encode(['success' => false, 'message' => 'PDF dosyası yüklenirken hata oluştu.']);
-            exit;
+
+        $pdfPaths = [];
+        if (is_array($pdfFile['error'])) {
+            foreach ($pdfFile['error'] as $key => $error) {
+                if ($error !== UPLOAD_ERR_OK) {
+                    echo json_encode(['success' => false, 'message' => 'PDF dosyalarından biri yüklenirken hata oluştu.']);
+                    exit;
+                }
+                $pdfPaths[] = $pdfFile['tmp_name'][$key];
+            }
+        } else {
+            if ($pdfFile['error'] !== UPLOAD_ERR_OK) {
+                echo json_encode(['success' => false, 'message' => 'PDF dosyası yüklenirken hata oluştu.']);
+                exit;
+            }
+            $pdfPaths[] = $pdfFile['tmp_name'];
         }
 
         $excelPath = $excelFile['tmp_name'];
-        $pdfPath = $pdfFile['tmp_name'];
 
         $excelExtractor = new ExcelExtractor();
         $pdfExtractor = new PdfExtractor();
+        
+        $useOcr = isset($_POST['use_ocr']) && $_POST['use_ocr'] === '1';
+        if ($useOcr) {
+            $pdfExtractor->setUseOcr(true);
+        }
+
         $reconciler = new Reconciler($excelExtractor, $pdfExtractor);
 
         $storeName = trim((string)($_POST['store_name'] ?? ''));
         if ($storeName === '') {
-            $storeName = $pdfExtractor->extractStoreName($pdfPath);
+            $storeNames = [];
+            foreach ($pdfPaths as $path) {
+                $storeNames[] = $pdfExtractor->extractStoreName($path);
+            }
+            $storeNames = array_unique($storeNames);
+            $storeName = implode(', ', $storeNames);
         }
 
-        $result = $reconciler->reconcile($excelPath, $pdfPath);
+        $result = $reconciler->reconcile($excelPath, $pdfPaths);
 
         // Generate barcode to store mapping
         $excelMap = $excelExtractor->extractMap($excelPath);
-        $pdfStoreName = $pdfExtractor->extractStoreName($pdfPath);
         $barcodeStores = $excelMap;
-        foreach ($result->storeBarcodes as $barcode) {
-            if (!isset($barcodeStores[$barcode])) {
-                $barcodeStores[$barcode] = $pdfStoreName;
+        foreach ($pdfPaths as $path) {
+            $pdfStoreName = $pdfExtractor->extractStoreName($path);
+            $pdfBarcodes = $pdfExtractor->extract($path);
+            foreach ($pdfBarcodes as $barcode) {
+                if (!isset($barcodeStores[$barcode])) {
+                    $barcodeStores[$barcode] = $pdfStoreName;
+                }
             }
         }
 
@@ -82,6 +108,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
             'saved_id' => $savedId,
             'result' => $result->toArray(),
             'barcode_stores' => $barcodeStores,
+            'pdf_original_words' => $pdfExtractor->getBarcodeToOriginalMap(),
+            'pdf_mismatches' => $pdfExtractor->getMismatches(),
         ]);
         exit;
     } catch (\Exception $e) {
@@ -228,8 +256,15 @@ if ($dbEnabled) {
                 
                 <form id="reconcileForm" class="reconcile-form">
                     <div class="form-group">
-                        <label for="store_name">Mağaza / Sevkiyat Adı <?= $dbEnabled ? '' : '<span class="optional-text">(İsteğe Bağlı)</span>' ?></label>
-                        <input type="text" id="store_name" name="store_name" placeholder="Örn: Kadıköy Mağazası - Sevkiyat 24" <?= $dbEnabled ? 'required' : '' ?>>
+                        <label for="store_name">Araç Plakası <?= $dbEnabled ? '' : '<span class="optional-text">(İsteğe Bağlı)</span>' ?></label>
+                        <input type="text" id="store_name" name="store_name" placeholder="Örn: 34ABC123" <?= $dbEnabled ? 'required' : '' ?>>
+                    </div>
+
+                    <div class="form-group checkbox-group" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; margin-bottom: 1.5rem;">
+                        <input type="checkbox" id="use_ocr" name="use_ocr" value="1" style="width: auto; height: auto; cursor: pointer;">
+                        <label for="use_ocr" style="margin: 0; cursor: pointer; font-size: 0.9rem; color: var(--text-secondary);">
+                            Görsel OCR Modu (Hatalı PDF fontlarını düzeltir, daha yavaştır)
+                        </label>
                     </div>
 
                     <div class="dropzones-container">
@@ -250,12 +285,12 @@ if ($dbEnabled) {
 
                         <!-- Right Dropzone: PDF -->
                         <div class="dropzone" id="pdfDropzone">
-                            <input type="file" id="pdf_file" name="pdf_file" accept=".pdf" required hidden>
+                            <input type="file" id="pdf_file" name="pdf_file[]" accept=".pdf" required hidden multiple>
                             <div class="dropzone-content">
                                 <div class="dropzone-icon">📕</div>
-                                <h3>Mağaza PDF Çıktısı</h3>
+                                <h3>Mağaza PDF Çıktıları</h3>
                                 <p>Sürükle-bırak veya tıklayarak seç</p>
-                                <span class="file-spec">Sadece .pdf formatı</span>
+                                <span class="file-spec">Birden çok .pdf seçilebilir</span>
                             </div>
                             <div class="selected-file-info" style="display:none;">
                                 <span class="file-name"></span>
@@ -282,6 +317,9 @@ if ($dbEnabled) {
                         <button type="button" class="btn btn-secondary" id="downloadCsvBtn">CSV İndir</button>
                     </div>
                 </div>
+
+                <!-- PDF Line Mismatches Warning (Initially Hidden) -->
+                <div id="mismatchContainer" style="display:none; margin-bottom: 1.5rem;"></div>
 
                 <!-- Stats Grid -->
                 <div class="stats-grid">

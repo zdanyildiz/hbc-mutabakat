@@ -12,16 +12,23 @@ class Reconciler
     ) {}
 
     /**
-     * Reconciles barcodes between an Excel/CSV file and a PDF file.
+     * Reconciles barcodes between an Excel/CSV file and one or more PDF files.
      *
      * @param string $excelPath
-     * @param string $pdfPath
+     * @param string|array<string> $pdfPaths
      * @return ReconciliationResult
      */
-    public function reconcile(string $excelPath, string $pdfPath): ReconciliationResult
+    public function reconcile(string $excelPath, string|array $pdfPaths): ReconciliationResult
     {
         $terminalBarcodes = $this->excelExtractor->extract($excelPath);
-        $storeBarcodes = $this->pdfExtractor->extract($pdfPath);
+
+        $pdfPaths = (array)$pdfPaths;
+        $storeBarcodes = [];
+        foreach ($pdfPaths as $pdfPath) {
+            $extracted = $this->pdfExtractor->extract($pdfPath);
+            $storeBarcodes = array_merge($storeBarcodes, $extracted);
+        }
+        $storeBarcodes = array_values(array_unique($storeBarcodes));
 
         // Terminalde olup, mağaza çıktısında OLMAYAN barkodlar (Eksik)
         $missingInStore = array_values(array_diff($terminalBarcodes, $storeBarcodes));

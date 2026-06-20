@@ -5,9 +5,50 @@ declare(strict_types=1);
 namespace App;
 
 use Smalot\PdfParser\Parser;
+use thiagoalessio\TesseractOCR\TesseractOCR;
 
 class PdfExtractor
 {
+    /** @var array<string, string> */
+    private array $barcodeToOriginalMap = [];
+
+    /**
+     * @var array<array{line_number: int, line_text: string, detected_barcodes: array<string>}>
+     */
+    private array $mismatches = [];
+
+    private bool $useOcr = false;
+
+    public function setUseOcr(bool $useOcr): void
+    {
+        $this->useOcr = $useOcr;
+    }
+
+    public function isUseOcr(): bool
+    {
+        return $this->useOcr;
+    }
+
+    /**
+     * Retrieves the map of extracted clean barcodes to their original raw words in PDF.
+     *
+     * @return array<string, string>
+     */
+    public function getBarcodeToOriginalMap(): array
+    {
+        return $this->barcodeToOriginalMap;
+    }
+
+    /**
+     * Retrieves the list of detected barcode mismatches on a single PDF line.
+     *
+     * @return array<array{line_number: int, line_text: string, detected_barcodes: array<string>}>
+     */
+    public function getMismatches(): array
+    {
+        return $this->mismatches;
+    }
+
     /**
      * Extracts barcode/tracking numbers from a PDF file.
      *
@@ -17,6 +58,10 @@ class PdfExtractor
      */
     public function extract(string $filePath): array
     {
+        if ($this->useOcr) {
+            return $this->extractOcr($filePath);
+        }
+
         if (!file_exists($filePath)) {
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
@@ -30,6 +75,7 @@ class PdfExtractor
         }
 
         $barcodes = [];
+        $this->mismatches = [];
         $lines = explode("\n", $text);
 
         // Common OCR character mappings for scanned documents
@@ -49,7 +95,7 @@ class PdfExtractor
             'S' => '5',
         ];
 
-        foreach ($lines as $line) {
+        foreach ($lines as $lineIndex => $line) {
             $line = trim($line);
             if ($line === '') {
                 continue;
@@ -60,6 +106,11 @@ class PdfExtractor
             if ($words === false) {
                 continue;
             }
+
+            /** @var array<string> $lineBarcodes */
+            $lineBarcodes = [];
+            /** @var array<string> $lineWords */
+            $lineWords = [];
 
             foreach ($words as $word) {
                 $word = trim($word);
@@ -75,7 +126,45 @@ class PdfExtractor
 
                 // 3) Validate if it fits tracking barcode lengths (16 to 20 digits)
                 if ($cleaned !== null && strlen($cleaned) >= 16 && strlen($cleaned) <= 20) {
-                    $barcodes[] = $cleaned;
+                    $lineBarcodes[] = $cleaned;
+                    $lineWords[] = $word;
+                }
+            }
+
+            $uniqueBarcodes = array_values(array_unique($lineBarcodes));
+            $countUnique = count($uniqueBarcodes);
+
+            if ($countUnique === 1) {
+                // Sadece tek bir barkod türü bulundu (tekrar etse bile aynı değer)
+                $barcode = $uniqueBarcodes[0];
+                $barcodes[] = $barcode;
+                
+                // Orijinal kelimeleri eşleştirelim
+                foreach ($lineBarcodes as $idx => $cleanedB) {
+                    if ($cleanedB === $barcode) {
+                        $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
+                        break;
+                    }
+                }
+            } elseif ($countUnique > 1) {
+                // Bir satırda birden fazla farklı barkod bulundu! Bu bir tutarsızlıktır!
+                $this->mismatches[] = [
+                    'line_number' => $lineIndex + 1,
+                    'line_text' => $line,
+                    'detected_barcodes' => $uniqueBarcodes,
+                ];
+                
+                // Tutarsızlık olsa bile, tedbir amaçlı her iki barkodu da geçerli kabul edip listeye ekleyelim
+                foreach ($uniqueBarcodes as $barcode) {
+                    $barcodes[] = $barcode;
+                    
+                    // Orijinal kelimeleri eşleştirelim
+                    foreach ($lineBarcodes as $idx => $cleanedB) {
+                        if ($cleanedB === $barcode) {
+                            $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -139,5 +228,148 @@ class PdfExtractor
         }
 
         return 'Bilinmeyen Mağaza';
+    }
+
+    /**
+     * Extracts barcode/tracking numbers from a PDF file using OCR (Imagick + Tesseract).
+     *
+     * @param string $filePath
+     * @return array<string>
+     * @throws \RuntimeException
+     */
+    private function extractOcr(string $filePath): array
+    {
+        if (!file_exists($filePath)) {
+            throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
+        }
+
+        if (!class_exists('\Imagick')) {
+            throw new \RuntimeException("PDF görsel dönüşümü için 'Imagick' PHP eklentisi kurulu olmalıdır.");
+        }
+
+        $images = [];
+        try {
+            $imagick = new \Imagick();
+            $imagick->setResolution(150, 150);
+            $imagick->readImage($filePath);
+
+            $tempDir = dirname(__DIR__) . '/var/tmp';
+            if (!is_dir($tempDir)) {
+                mkdir($tempDir, 0777, true);
+            }
+
+            foreach ($imagick as $index => $page) {
+                $page->setImageFormat('png');
+                $pagePath = $tempDir . '/page_' . uniqid() . '_' . $index . '.png';
+                $page->writeImage($pagePath);
+                $images[] = $pagePath;
+            }
+            $imagick->clear();
+        } catch (\Exception $e) {
+            throw new \RuntimeException("PDF görsele dönüştürülürken hata oluştu: " . $e->getMessage());
+        }
+
+        $barcodes = [];
+        $this->mismatches = [];
+
+        // Common OCR character mappings for scanned documents
+        $ocrMap = [
+            'l' => '1',
+            'ı' => '1',
+            'I' => '1',
+            'i' => '1',
+            '!' => '1',
+            '[' => '1',
+            ']' => '1',
+            'B' => '8',
+            'M' => '0',
+            'O' => '0',
+            'o' => '0',
+            'E' => '8',
+            'S' => '5',
+        ];
+
+        foreach ($images as $pagePath) {
+            try {
+                $ocr = new TesseractOCR($pagePath);
+                // @phpstan-ignore-next-line
+                $ocr->lang('tur', 'eng');
+                $text = $ocr->run();
+
+                // Okuma bittikten sonra geçici resmi temizle
+                if (file_exists($pagePath)) {
+                    unlink($pagePath);
+                }
+
+                $lines = explode("\n", $text);
+                foreach ($lines as $lineIndex => $line) {
+                    $line = trim($line);
+                    if ($line === '') {
+                        continue;
+                    }
+
+                    $words = preg_split('/[\s\t]+/', $line);
+                    if ($words === false) {
+                        continue;
+                    }
+
+                    /** @var array<string> $lineBarcodes */
+                    $lineBarcodes = [];
+                    /** @var array<string> $lineWords */
+                    $lineWords = [];
+
+                    foreach ($words as $word) {
+                        $word = trim($word);
+                        if ($word === '') {
+                            continue;
+                        }
+
+                        $converted = strtr($word, $ocrMap);
+                        $cleaned = preg_replace('/\D/', '', $converted);
+
+                        if ($cleaned !== null && strlen($cleaned) >= 16 && strlen($cleaned) <= 20) {
+                            $lineBarcodes[] = $cleaned;
+                            $lineWords[] = $word;
+                        }
+                    }
+
+                    $uniqueBarcodes = array_values(array_unique($lineBarcodes));
+                    $countUnique = count($uniqueBarcodes);
+
+                    if ($countUnique === 1) {
+                        $barcode = $uniqueBarcodes[0];
+                        $barcodes[] = $barcode;
+                        foreach ($lineBarcodes as $idx => $cleanedB) {
+                            if ($cleanedB === $barcode) {
+                                $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
+                                break;
+                            }
+                        }
+                    } elseif ($countUnique > 1) {
+                        $this->mismatches[] = [
+                            'line_number' => $lineIndex + 1,
+                            'line_text' => $line,
+                            'detected_barcodes' => $uniqueBarcodes,
+                        ];
+                        foreach ($uniqueBarcodes as $barcode) {
+                            $barcodes[] = $barcode;
+                            foreach ($lineBarcodes as $idx => $cleanedB) {
+                                if ($cleanedB === $barcode) {
+                                    $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                if (file_exists($pagePath)) {
+                    unlink($pagePath);
+                }
+                throw new \RuntimeException("OCR okuma hatası: " . $e->getMessage());
+            }
+        }
+
+        return array_values(array_unique($barcodes));
     }
 }

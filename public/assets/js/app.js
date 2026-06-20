@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // File selected via dialog
         input.addEventListener('change', () => {
             if (input.files && input.files.length > 0) {
-                showFile(input.files[0].name);
+                showFile(input.files);
             }
         });
 
@@ -50,8 +50,14 @@ document.addEventListener('DOMContentLoaded', () => {
         dropzone.addEventListener('drop', (e) => {
             const dt = e.dataTransfer;
             if (dt && dt.files && dt.files.length > 0) {
-                input.files = dt.files;
-                showFile(dt.files[0].name);
+                if (input.multiple) {
+                    input.files = dt.files;
+                } else {
+                    const singleFileDT = new DataTransfer();
+                    singleFileDT.items.add(dt.files[0]);
+                    input.files = singleFileDT.files;
+                }
+                showFile(input.files);
                 // Trigger change event manually
                 input.dispatchEvent(new Event('change'));
             }
@@ -67,8 +73,14 @@ document.addEventListener('DOMContentLoaded', () => {
             dropzone.classList.remove('has-file');
         });
 
-        function showFile(name) {
-            fileNameSpan.textContent = name;
+        function showFile(files) {
+            if (files.length > 1) {
+                fileNameSpan.textContent = `${files.length} PDF dosyası seçildi`;
+            } else if (files.length === 1) {
+                fileNameSpan.textContent = files[0].name;
+            } else {
+                fileNameSpan.textContent = '';
+            }
             content.style.display = 'none';
             info.style.display = 'flex';
             dropzone.classList.add('has-file');
@@ -103,7 +115,9 @@ document.addEventListener('DOMContentLoaded', () => {
         matched: [],
         missingInStore: [],
         extraInStore: [],
-        barcodeStores: {}
+        barcodeStores: {},
+        pdfOriginalWords: {},
+        pdfMismatches: []
     };
 
     let activeFilter = 'all';
@@ -131,6 +145,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentData.missingInStore = data.result.missingInStore;
                 currentData.extraInStore = data.result.extraInStore;
                 currentData.barcodeStores = data.barcode_stores || {};
+                currentData.pdfOriginalWords = data.pdf_original_words || {};
+                currentData.pdfMismatches = data.pdf_mismatches || [];
 
                 renderResults();
                 resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -170,6 +186,29 @@ document.addEventListener('DOMContentLoaded', () => {
         countMissing.textContent = misCount;
         countExtra.textContent = exCount;
 
+        // Render PDF Mismatches Warning
+        const mismatchContainer = document.getElementById('mismatchContainer');
+        if (currentData.pdfMismatches && currentData.pdfMismatches.length > 0) {
+            let mismatchHtml = `<div class="mismatch-alert-box">
+                <div class="mismatch-alert-title">⚠️ PDF Satır Tutarsızlığı Tespit Edildi</div>
+                <p style="margin: 0 0 0.5rem 0; font-size: 0.85rem;">PDF dosyasındaki aynı satırda yer alan 'TemaTakipNo' ve 'Kargo Takip No' değerleri birbiriyle eşleşmemektedir. Firmayla irtibata geçip PDF'in doğruluğunu teyit etmeniz önerilir:</p>
+                <ul class="mismatch-alert-list">`;
+            
+            currentData.pdfMismatches.forEach(m => {
+                const barcodesStr = m.detected_barcodes.map(b => `<code>${escapeHtml(b)}</code>`).join(' ve ');
+                mismatchHtml += `<li class="mismatch-alert-item">
+                    <strong>Satır ${m.line_number}:</strong> PDF içinde ${barcodesStr} değerleri okundu. Orijinal Satır: <em>"${escapeHtml(m.line_text)}"</em>
+                </li>`;
+            });
+            
+            mismatchHtml += `</ul></div>`;
+            mismatchContainer.innerHTML = mismatchHtml;
+            mismatchContainer.style.display = 'block';
+        } else {
+            mismatchContainer.style.display = 'none';
+            mismatchContainer.innerHTML = '';
+        }
+
         buildTable();
     }
 
@@ -179,13 +218,26 @@ document.addEventListener('DOMContentLoaded', () => {
         let rowsHtml = '';
         let matchFound = false;
 
+        const getOcrAlert = (barcode) => {
+            const originalWord = currentData.pdfOriginalWords[barcode];
+            if (originalWord && originalWord !== barcode) {
+                return `<br><span class="ocr-warning-box" title="PDF font kodlaması hatalı basılmış. PDF'te aramak için bu kodu kopyalayın.">
+                    PDF Arama Kodu: <code class="copyable-code" title="Kopyalamak için tıklayın" onclick="navigator.clipboard.writeText('${escapeHtml(originalWord)}'); alert('PDF arama kodu kopyalandı: ${escapeHtml(originalWord)}')">${escapeHtml(originalWord)}</code> 📋
+                </span>`;
+            }
+            return '';
+        };
+
         // Missing Items (Kırmızı)
         if (activeFilter === 'all' || activeFilter === 'missing') {
             currentData.missingInStore.forEach(barcode => {
                 if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
                     const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
                     rowsHtml += `<tr class="row-missing" data-type="missing">
-                        <td class="font-semibold">${escapeHtml(barcode)}</td>
+                        <td class="font-semibold">
+                            ${escapeHtml(barcode)}
+                            ${getOcrAlert(barcode)}
+                        </td>
                         <td class="text-secondary">${escapeHtml(storeName)}</td>
                         <td><span class="badge badge-missing">Eksik</span></td>
                         <td class="text-muted">Terminalde okutulmuş ancak Mağaza PDF'inde bulunamadı.</td>
@@ -201,7 +253,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
                     const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
                     rowsHtml += `<tr class="row-extra" data-type="extra">
-                        <td class="font-semibold">${escapeHtml(barcode)}</td>
+                        <td class="font-semibold">
+                            ${escapeHtml(barcode)}
+                            ${getOcrAlert(barcode)}
+                        </td>
                         <td class="text-secondary">${escapeHtml(storeName)}</td>
                         <td><span class="badge badge-extra">Fazla</span></td>
                         <td class="text-muted">Mağaza PDF'inde mevcut ancak Terminalde okutulmamış.</td>
@@ -217,7 +272,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
                     const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
                     rowsHtml += `<tr class="row-matched" data-type="matched">
-                        <td class="font-semibold">${escapeHtml(barcode)}</td>
+                        <td class="font-semibold">
+                            ${escapeHtml(barcode)}
+                            ${getOcrAlert(barcode)}
+                        </td>
                         <td class="text-secondary">${escapeHtml(storeName)}</td>
                         <td><span class="badge badge-matched">Eşleşti</span></td>
                         <td class="text-muted">Her iki listede de başarıyla eşleşti.</td>
@@ -282,6 +340,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         currentData.matched = data.result.matched;
                         currentData.missingInStore = data.result.missingInStore;
                         currentData.extraInStore = data.result.extraInStore;
+                        currentData.pdfOriginalWords = {}; // clear for past db reports
+                        currentData.pdfMismatches = []; // clear for past db reports
 
                         renderResults();
                         resultsSection.scrollIntoView({ behavior: 'smooth' });

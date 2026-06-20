@@ -711,3 +711,72 @@ body {
 .text-muted {
     color: var(--text-muted);
 }
+
+.ocr-warning-box {
+    margin-top: 0.35rem;
+    font-size: 0.75rem;
+    background: rgba(139, 92, 246, 0.08);
+    border: 1px solid rgba(139, 92, 246, 0.15);
+    padding: 0.25rem 0.5rem;
+    border-radius: 6px;
+    color: #c084fc;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    max-width: max-content;
+}
+
+.copyable-code {
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+    font-family: monospace;
+    cursor: pointer;
+    font-weight: bold;
+    color: #e9d5ff;
+    transition: var(--transition-smooth);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.copyable-code:hover {
+    background: rgba(139, 92, 246, 0.3);
+    color: #ffffff;
+}
+
+.mismatch-alert-box {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 10px;
+    padding: 1.25rem;
+    color: #fca5a5;
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.05);
+}
+
+.mismatch-alert-title {
+    font-weight: 700;
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #ef4444;
+}
+
+.mismatch-alert-list {
+    margin: 0;
+    padding-left: 1.25rem;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.mismatch-alert-item {
+    margin-bottom: 0.35rem;
+}
+
+.mismatch-alert-item code {
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+    font-family: monospace;
+    color: #fecaca;
+}

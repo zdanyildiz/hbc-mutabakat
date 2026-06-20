@@ -3,3 +3,5 @@ parameters:
     paths:
         - src
         - public
+    bootstrapFiles:
+        - stubs/Imagick.php

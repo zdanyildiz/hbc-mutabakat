@@ -30,34 +30,30 @@ class ExcelExtractor
 
         $barcodes = [];
 
-        foreach ($worksheet->getRowIterator() as $row) {
-            $cellIterator = $row->getCellIterator();
-            $cellIterator->setIterateOnlyExistingCells(false); // Loop all cells
-            
-            foreach ($cellIterator as $cell) {
-                $value = $cell->getValue();
-                if ($value === null || $value === '') {
-                    continue;
-                }
+        foreach ($worksheet->getRowIterator() as $rowIndex => $row) {
+            if ($rowIndex === 1) {
+                continue; // Skip header
+            }
 
-                // Convert formulas or rich text to string representation
-                $valStr = '';
-                if (is_scalar($value)) {
-                    $valStr = trim((string)$value);
-                } elseif ($value instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
-                    $valStr = trim($value->getPlainText());
+            $cell = $worksheet->getCell('A' . $rowIndex);
+            $barcodeStr = trim($cell->getFormattedValue());
+            if ($barcodeStr === '') {
+                $barcodeVal = $cell->getValue();
+                if (is_scalar($barcodeVal)) {
+                    $barcodeStr = trim((string)$barcodeVal);
+                } elseif ($barcodeVal instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
+                    $barcodeStr = trim($barcodeVal->getPlainText());
                 }
+            }
 
-                if ($valStr === '') {
-                    continue;
-                }
+            if ($barcodeStr === '') {
+                continue;
+            }
 
-                // Use the same regex pattern to extract potential 16-20 digit tracking numbers
-                if (preg_match_all('/\b\d{16,20}\b/', $valStr, $matches)) {
-                    foreach ($matches[0] as $match) {
-                        $barcodes[] = $match;
-                    }
-                }
+            // Sadece sayısal kısmı temizleyelim
+            $barcodeStrCleaned = preg_replace('/\D/', '', $barcodeStr);
+            if ($barcodeStrCleaned !== null && strlen($barcodeStrCleaned) >= 16 && strlen($barcodeStrCleaned) <= 20) {
+                $barcodes[] = $barcodeStrCleaned;
             }
         }
 
@@ -91,25 +87,28 @@ class ExcelExtractor
                 continue; // Skip header
             }
 
-            // Column A -> Barcode
             $barcodeCell = $worksheet->getCell('A' . $rowIndex);
-            $barcodeVal = $barcodeCell->getValue();
-            if ($barcodeVal === null || $barcodeVal === '') {
-                continue;
-            }
-
-            $barcodeStr = '';
-            if (is_scalar($barcodeVal)) {
-                $barcodeStr = trim((string)$barcodeVal);
-            } elseif ($barcodeVal instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
-                $barcodeStr = trim($barcodeVal->getPlainText());
+            // Büyük rakamların bozulmaması için getFormattedValue() öncelikli
+            $barcodeStr = trim($barcodeCell->getFormattedValue());
+            if ($barcodeStr === '') {
+                $barcodeVal = $barcodeCell->getValue();
+                if (is_scalar($barcodeVal)) {
+                    $barcodeStr = trim((string)$barcodeVal);
+                } elseif ($barcodeVal instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
+                    $barcodeStr = trim($barcodeVal->getPlainText());
+                }
             }
 
             if ($barcodeStr === '') {
                 continue;
             }
 
-            // Column F -> Store Name
+            // Sadece sayısal kısımları alalım (böylece .0 vb. temizlenir)
+            $barcodeStrCleaned = preg_replace('/\D/', '', $barcodeStr);
+            if ($barcodeStrCleaned === null || strlen($barcodeStrCleaned) < 16 || strlen($barcodeStrCleaned) > 20) {
+                continue;
+            }
+
             $storeCell = $worksheet->getCell('F' . $rowIndex);
             $storeVal = $storeCell->getValue();
             $storeStr = '';
@@ -119,9 +118,11 @@ class ExcelExtractor
                 $storeStr = trim($storeVal->getPlainText());
             }
 
-            if (preg_match('/^\d{16,20}$/', $barcodeStr)) {
-                $map[$barcodeStr] = $storeStr !== '' ? $storeStr : 'Bilinmeyen Mağaza';
+            if ($storeStr === '') {
+                $storeStr = "[Mağaza Adı Belirtilmemiş (Satır {$rowIndex})]";
             }
+
+            $map[$barcodeStrCleaned] = $storeStr;
         }
 
         return $map;
