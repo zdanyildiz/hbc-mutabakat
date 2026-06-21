@@ -452,11 +452,12 @@ class PdfExtractor
                     }
                 }
             } catch (\Exception $e) {
-                \App\Logger::log("[PdfExtractor-OCR] Tesseract HATA: " . $e->getMessage());
+                \App\Logger::log("[PdfExtractor-OCR] UYARI: Sayfa {$index} okunamadı (Boş sayfa veya okuma hatası) - Hata: " . $e->getMessage());
                 if (file_exists($pagePath)) {
                     unlink($pagePath);
                 }
-                throw new \RuntimeException("OCR okuma hatası: " . $e->getMessage());
+                // Hata veren sayfayı atlayıp sonraki sayfalarla devam ediyoruz
+                continue;
             }
         }
 
