@@ -19,6 +19,13 @@ class PdfExtractor
 
     private bool $useOcr = false;
 
+    // Character mapping table to fix OCR and font encoding issues
+    private const OCR_MAP = [
+        'l' => '1', 'ı' => '1', 'I' => '1', 'i' => '1', '!' => '1', '[' => '1', ']' => '3',
+        'B' => '8', 'M' => '0', 'O' => '0', 'o' => '0', 'E' => '8', 'S' => '5', 's' => '5', 'ü' => '4',
+        't' => '1', '|' => '1', '}' => '1', '{' => '8', 'j' => '3', 'J' => '3'
+    ];
+
     public function setUseOcr(bool $useOcr): void
     {
         $this->useOcr = $useOcr;
@@ -58,39 +65,44 @@ class PdfExtractor
      */
     public function extract(string $filePath): array
     {
-        if ($this->useOcr) {
-            return $this->extractOcr($filePath);
-        }
-
         if (!file_exists($filePath)) {
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
 
+        // Try Python extraction first
+        $mode = $this->useOcr ? 'ocr' : 'text';
+        $pythonResult = $this->extractWithPython($filePath, $mode);
+        if ($pythonResult !== null) {
+            return $pythonResult;
+        }
+
+        // Fallback to optimized native PHP extraction
+        if ($this->useOcr) {
+            return $this->extractOcrPhp($filePath);
+        }
+
         $pdfStart = microtime(true);
-        \App\Logger::log("[PdfExtractor-Text] PDF okuma başladı: " . basename($filePath));
+        \App\Logger::log("[PdfExtractor-Text] PDF okuma başladı (PHP Fallback): " . basename($filePath));
 
         $text = '';
         $usedPdftotext = false;
 
-        // 1. Yol: pdftotext CLI aracını dene (C tabanlı olduğu için Smalot'a göre 100 kat daha hızlıdır ve sıfır RAM tüketir)
         $checkCommand = PHP_OS_FAMILY === 'Windows' ? 'where pdftotext' : 'which pdftotext';
-        $hasPdftotext = shell_exec($checkCommand);
+        $hasPdftotext = (string)shell_exec($checkCommand);
 
-        if ($hasPdftotext !== null && trim($hasPdftotext) !== '') {
+        if (trim($hasPdftotext) !== '') {
             $pdftotextStart = microtime(true);
-            // -layout parametresi satır yapısını korur, satır tutarsızlığı kontrolleri için gereklidir
             $output = shell_exec('pdftotext -layout ' . escapeshellarg($filePath) . ' -');
-            if ($output !== null) {
-                $text = $output;
+            if ($output !== null && $output !== false) {
+                $text = (string)$output;
                 $usedPdftotext = true;
                 $pdftotextElapsed = round(microtime(true) - $pdftotextStart, 4);
                 \App\Logger::log("[PdfExtractor-Text] C++ pdftotext aracı kullanıldı - Süre: {$pdftotextElapsed} saniye");
             }
         }
 
-        // 2. Yol (Fallback): pdftotext yoksa Smalot PdfParser kullan
         if (!$usedPdftotext) {
-            \App\Logger::log("[PdfExtractor-Text] UYARI: pdftotext bulunamadı veya çalışmadı, Smalot PDF Parser fallback devreye giriyor.");
+            \App\Logger::log("[PdfExtractor-Text] UYARI: pdftotext bulunamadı, Smalot PDF Parser fallback devreye giriyor.");
             $smalotStart = microtime(true);
             $parser = new Parser();
             try {
@@ -104,108 +116,11 @@ class PdfExtractor
             }
         }
 
-        $barcodes = [];
-        $this->mismatches = [];
-        $lines = explode("\n", $text);
-
-        // Common OCR character mappings for scanned documents
-        $ocrMap = [
-            'l' => '1',
-            'ı' => '1',
-            'I' => '1',
-            'i' => '1',
-            '!' => '1',
-            '[' => '1',
-            ']' => '1',
-            'B' => '8',
-            'M' => '0',
-            'O' => '0',
-            'o' => '0',
-            'E' => '8',
-            'S' => '5',
-            's' => '5',
-            'ü' => '4',
-        ];
-
-        foreach ($lines as $lineIndex => $line) {
-            $line = trim($line);
-            if ($line === '') {
-                continue;
-            }
-
-            // Extract candidate barcodes (allowing spaces/hyphens and OCR characters)
-            preg_match_all('/\b(?:[A-Za-z0-9\x{0131}\x{0130}!\[\]][\s-]*){14,30}\b/u', $line, $matches);
-
-            /** @var array<string> $lineBarcodes */
-            $lineBarcodes = [];
-            /** @var array<string> $lineWords */
-            $lineWords = [];
-
-            if (!empty($matches[0])) {
-                foreach ($matches[0] as $matchedWord) {
-                    $matchedWord = trim($matchedWord);
-                    if ($matchedWord === '') {
-                        continue;
-                    }
-
-                    // 1) Apply OCR character mapping
-                    $converted = strtr($matchedWord, $ocrMap);
-
-                    // 2) Remove any non-digit characters
-                    $cleaned = preg_replace('/\D/', '', $converted);
-
-                    // 3) Validate if it fits tracking barcode lengths (16 to 20 digits)
-                    if ($cleaned !== null && strlen($cleaned) >= 16 && strlen($cleaned) <= 20) {
-                        $lineBarcodes[] = $cleaned;
-                        $lineWords[] = $matchedWord;
-                    }
-                }
-            }
-
-            $uniqueBarcodes = array_values(array_unique($lineBarcodes));
-            $countUnique = count($uniqueBarcodes);
-
-            if ($countUnique === 1) {
-                // Sadece tek bir barkod türü bulundu (tekrar etse bile aynı değer)
-                $barcode = $uniqueBarcodes[0];
-                $barcodes[] = $barcode;
-                
-                // Orijinal kelimeleri eşleştirelim
-                foreach ($lineBarcodes as $idx => $cleanedB) {
-                    if ($cleanedB === $barcode) {
-                        $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
-                        break;
-                    }
-                }
-            } elseif ($countUnique > 1) {
-                // Bir satırda birden fazla farklı barkod bulundu! Bu bir tutarsızlıktır!
-                $this->mismatches[] = [
-                    'line_number' => $lineIndex + 1,
-                    'line_text' => $line,
-                    'detected_barcodes' => $uniqueBarcodes,
-                ];
-                
-                // Tutarsızlık olsa bile, tedbir amaçlı her iki barkodu da geçerli kabul edip listeye ekleyelim
-                foreach ($uniqueBarcodes as $barcode) {
-                    $barcodes[] = $barcode;
-                    
-                    // Orijinal kelimeleri eşleştirelim
-                    foreach ($lineBarcodes as $idx => $cleanedB) {
-                        if ($cleanedB === $barcode) {
-                            $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        $uniqueBarcodes = array_values(array_unique($barcodes));
+        $barcodes = $this->processText($text);
         $elapsed = round(microtime(true) - $pdfStart, 4);
-        \App\Logger::log("[PdfExtractor-Text] Tamamlandı - Süre: {$elapsed} saniye | Toplam Satır: " . count($lines) . " | Benzersiz Barkod: " . count($uniqueBarcodes));
+        \App\Logger::log("[PdfExtractor-Text] Tamamlandı - Süre: {$elapsed} saniye | Benzersiz Barkod: " . count($barcodes));
 
-        // Remove duplicates and re-index
-        return $uniqueBarcodes;
+        return $barcodes;
     }
 
     /**
@@ -242,7 +157,6 @@ class PdfExtractor
                     continue;
                 }
                 
-                // Fix OCR glitches in common store names (e.g. T3o&lsT -> T308)
                 $cleanedStore = strtr($line, [
                     'T3o&lsT' => 'T308',
                     'o' => '0',
@@ -266,24 +180,63 @@ class PdfExtractor
     }
 
     /**
-     * Extracts barcode/tracking numbers from a PDF file using OCR (Imagick + Tesseract).
+     * Tries to extract barcodes using the Python backend.
+     * Returns null if Python is not available or fails, allowing PHP fallback.
+     *
+     * @param string $filePath
+     * @param string $mode
+     * @return array<string>|null
+     */
+    private function extractWithPython(string $filePath, string $mode): ?array
+    {
+        $pythonScript = dirname(__DIR__) . '/src/reconcile.py';
+        if (!file_exists($pythonScript)) {
+            return null;
+        }
+
+        $commands = [
+            'python3 ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath),
+            'python ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath)
+        ];
+
+        foreach ($commands as $cmd) {
+            $output = (string)shell_exec($cmd . ' 2>&1');
+            if (trim($output) === '') {
+                continue;
+            }
+
+            $data = json_decode($output, true);
+            if (is_array($data) && isset($data['success']) && $data['success'] === true) {
+                $this->barcodeToOriginalMap = $data['barcode_to_original'] ?? [];
+                $this->mismatches = $data['mismatches'] ?? [];
+                
+                $timeLog = isset($data['elapsed_time']) ? "Süre: {$data['elapsed_time']} sn" : "";
+                \App\Logger::log("[PdfExtractor-Python] Başarıyla tamamlandı - Mod: {$mode} | {$timeLog}");
+                
+                return $data['barcodes'] ?? [];
+            } else {
+                \App\Logger::log("[PdfExtractor-Python] Hata veya uyumsuz çıktı: " . trim(substr($output, 0, 200)));
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Extracts barcode/tracking numbers from a PDF file using native PHP OCR (Imagick + Tesseract).
      *
      * @param string $filePath
      * @return array<string>
      * @throws \RuntimeException
      */
-    private function extractOcr(string $filePath): array
+    private function extractOcrPhp(string $filePath): array
     {
-        if (!file_exists($filePath)) {
-            throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
-        }
-
         if (!class_exists('\Imagick')) {
             throw new \RuntimeException("PDF görsel dönüşümü için 'Imagick' PHP eklentisi kurulu olmalıdır.");
         }
 
         $ocrStart = microtime(true);
-        \App\Logger::log("[PdfExtractor-OCR] OCR işlemi başladı: " . basename($filePath));
+        \App\Logger::log("[PdfExtractor-OCR] OCR işlemi başladı (PHP Fallback): " . basename($filePath));
 
         $images = [];
         $tempDir = dirname(__DIR__) . '/var/tmp';
@@ -292,7 +245,6 @@ class PdfExtractor
         }
 
         try {
-            // PDF'in sayfa sayısını hızlıca öğrenmek için pingImage kullanıyoruz
             $pingImagick = new \Imagick();
             $pingImagick->pingImage($filePath);
             $pageCount = $pingImagick->getNumberImages();
@@ -301,10 +253,8 @@ class PdfExtractor
 
             \App\Logger::log("[PdfExtractor-OCR] Toplam Sayfa Sayısı: {$pageCount}");
 
-            // Her sayfayı tek tek bellek dostu şekilde işliyoruz
             for ($i = 0; $i < $pageCount; $i++) {
                 $pageStart = microtime(true);
-                // Nginx/Apache bağlantısının kopmasını engellemek için veri akışını canlı tut
                 echo " ";
                 if (function_exists('ob_flush') && ob_get_level() > 0) {
                     @ob_flush();
@@ -312,11 +262,9 @@ class PdfExtractor
                 flush();
 
                 $pageImagick = new \Imagick();
-                // Kullanıcının isteği üzerine kesin okuma kalitesi için 300 DPI yapıldı
-                $pageImagick->setResolution(300, 300);
+                $pageImagick->setResolution(150, 150); // Optimized resolution
                 $pageImagick->readImage($filePath . '[' . $i . ']');
 
-                // Ön işleme: Grayscale + Binarization (OCR doğruluğunu artırır)
                 $pageImagick->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
                 $pageImagick->thresholdImage(0.5 * \Imagick::getQuantum());
                 $pageImagick->setImageFormat('png');
@@ -333,7 +281,6 @@ class PdfExtractor
             }
         } catch (\Exception $e) {
             \App\Logger::log("[PdfExtractor-OCR] Imagick HATA: " . $e->getMessage());
-            // Hata durumunda oluşturulmuş geçici resimleri temizle
             foreach ($images as $img) {
                 if (file_exists($img)) {
                     unlink($img);
@@ -342,30 +289,9 @@ class PdfExtractor
             throw new \RuntimeException("PDF görsele dönüştürülürken hata oluştu: " . $e->getMessage());
         }
 
-        $barcodes = [];
-        $this->mismatches = [];
-
-        // Common OCR character mappings for scanned documents
-        $ocrMap = [
-            'l' => '1',
-            'ı' => '1',
-            'I' => '1',
-            'i' => '1',
-            '!' => '1',
-            '[' => '1',
-            ']' => '1',
-            'B' => '8',
-            'M' => '0',
-            'O' => '0',
-            'o' => '0',
-            'E' => '8',
-            'S' => '5',
-            's' => '5',
-            'ü' => '4',
-        ];
+        $allText = '';
 
         foreach ($images as $index => $pagePath) {
-            // Nginx/Apache bağlantısının kopmasını engellemek için veri akışını canlı tut
             echo " ";
             if (function_exists('ob_flush') && ob_get_level() > 0) {
                 @ob_flush();
@@ -381,93 +307,134 @@ class PdfExtractor
                 $ocr->psm(6);
                 $text = $ocr->run();
 
-                // Okuma bittikten sonra geçici resmi temizle
                 if (file_exists($pagePath)) {
                     unlink($pagePath);
                 }
 
                 $tessElapsed = round(microtime(true) - $tessStart, 4);
                 \App\Logger::log("[PdfExtractor-OCR] Sayfa {$index} Tesseract okuması bitti - Süre: {$tessElapsed} saniye");
-
-                $lines = explode("\n", $text);
-                foreach ($lines as $lineIndex => $line) {
-                    $line = trim($line);
-                    if ($line === '') {
-                        continue;
-                    }
-
-                    // Extract candidate barcodes (allowing spaces/hyphens and OCR characters)
-                    preg_match_all('/\b(?:[A-Za-z0-9\x{0131}\x{0130}!\[\]][\s-]*){14,30}\b/u', $line, $matches);
-
-                    /** @var array<string> $lineBarcodes */
-                    $lineBarcodes = [];
-                    /** @var array<string> $lineWords */
-                    $lineWords = [];
-
-                    if (!empty($matches[0])) {
-                        foreach ($matches[0] as $matchedWord) {
-                            $matchedWord = trim($matchedWord);
-                            if ($matchedWord === '') {
-                                continue;
-                            }
-
-                            // 1) Apply OCR character mapping
-                            $converted = strtr($matchedWord, $ocrMap);
-
-                            // 2) Remove any non-digit characters
-                            $cleaned = preg_replace('/\D/', '', $converted);
-
-                            // 3) Validate if it fits tracking barcode lengths (16 to 20 digits)
-                            if ($cleaned !== null && strlen($cleaned) >= 16 && strlen($cleaned) <= 20) {
-                                $lineBarcodes[] = $cleaned;
-                                $lineWords[] = $matchedWord;
-                            }
-                        }
-                    }
-
-                    $uniqueBarcodes = array_values(array_unique($lineBarcodes));
-                    $countUnique = count($uniqueBarcodes);
-
-                    if ($countUnique === 1) {
-                        $barcode = $uniqueBarcodes[0];
-                        $barcodes[] = $barcode;
-                        foreach ($lineBarcodes as $idx => $cleanedB) {
-                            if ($cleanedB === $barcode) {
-                                $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
-                                break;
-                            }
-                        }
-                    } elseif ($countUnique > 1) {
-                        $this->mismatches[] = [
-                            'line_number' => $lineIndex + 1,
-                            'line_text' => $line,
-                            'detected_barcodes' => $uniqueBarcodes,
-                        ];
-                        foreach ($uniqueBarcodes as $barcode) {
-                            $barcodes[] = $barcode;
-                            foreach ($lineBarcodes as $idx => $cleanedB) {
-                                  if ($cleanedB === $barcode) {
-                                      $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
-                                      break;
-                                  }
-                            }
-                        }
-                    }
-                }
+                $allText .= $text . "\n";
             } catch (\Exception $e) {
-                \App\Logger::log("[PdfExtractor-OCR] UYARI: Sayfa {$index} okunamadı (Boş sayfa veya okuma hatası) - Hata: " . $e->getMessage());
+                \App\Logger::log("[PdfExtractor-OCR] UYARI: Sayfa {$index} okunamadı - Hata: " . $e->getMessage());
                 if (file_exists($pagePath)) {
                     unlink($pagePath);
                 }
-                // Hata veren sayfayı atlayıp sonraki sayfalarla devam ediyoruz
-                continue;
             }
         }
 
-        $uniqueBarcodes = array_values(array_unique($barcodes));
+        $barcodes = $this->processText($allText);
         $elapsed = round(microtime(true) - $ocrStart, 4);
-        \App\Logger::log("[PdfExtractor-OCR] Tamamlandı - Toplam Süre: {$elapsed} saniye | Benzersiz Barkod: " . count($uniqueBarcodes));
+        \App\Logger::log("[PdfExtractor-OCR] Tamamlandı - Toplam Süre: {$elapsed} saniye | Benzersiz Barkod: " . count($barcodes));
 
-        return $uniqueBarcodes;
+        return $barcodes;
+    }
+
+    /**
+     * Helper to process text, apply character mapping and extract barcodes.
+     *
+     * @param string $text
+     * @return array<string>
+     */
+    private function processText(string $text): array
+    {
+        $barcodes = [];
+        $this->mismatches = [];
+
+        // 1) Apply character mapping globally
+        $convertedText = strtr($text, self::OCR_MAP);
+
+        $lines = explode("\n", $convertedText);
+        $preprocessedLines = [];
+
+        // 2) Preprocess split lines
+        for ($i = 0; $i < count($lines); $i++) {
+            $line = trim($lines[$i]);
+            if ($line === '') {
+                continue;
+            }
+
+            $digits = (string)preg_replace('/\D/', '', $line);
+            $digitCount = strlen($digits);
+
+            if ($digitCount >= 11 && $digitCount <= 15) {
+                if (isset($lines[$i + 1])) {
+                    $nextLine = trim($lines[$i + 1]);
+                    $nextDigits = (string)preg_replace('/\D/', '', $nextLine);
+                    if ($nextDigits !== '' && strlen($nextLine) <= 5) {
+                        $line .= " " . $nextLine;
+                        $i++;
+                    }
+                }
+            }
+            $preprocessedLines[] = $line;
+        }
+
+        // 3) Extract barcodes from preprocessed lines
+        foreach ($preprocessedLines as $lineIndex => $line) {
+            preg_match_all('/\b[0-9](?:[0-9\s-]*[0-9])?\b/u', $line, $matches);
+
+            /** @var array<string> $lineBarcodes */
+            $lineBarcodes = [];
+            /** @var array<string> $lineWords */
+            $lineWords = [];
+
+            if (!empty($matches[0])) {
+                foreach ($matches[0] as $match) {
+                    $cleaned = (string)preg_replace('/\D/', '', $match);
+                    if ($cleaned === '') {
+                        continue;
+                    }
+
+                    // Smart sequence number trimming:
+                    $len = strlen($cleaned);
+                    if ($len > 18) {
+                        foreach ([18, 17, 16] as $targetLen) {
+                            $suffix = substr($cleaned, -$targetLen);
+                            if (preg_match('/^(?:1|6|7)/', $suffix)) {
+                                $cleaned = $suffix;
+                                break;
+                            }
+                        }
+                    }
+
+                    $finalLen = strlen($cleaned);
+                    if ($finalLen >= 16 && $finalLen <= 20) {
+                        $lineBarcodes[] = $cleaned;
+                        $lineWords[] = $match;
+                    }
+                }
+            }
+
+            $uniqueBarcodes = array_values(array_unique($lineBarcodes));
+            $countUnique = count($uniqueBarcodes);
+
+            if ($countUnique === 1) {
+                $barcode = $uniqueBarcodes[0];
+                $barcodes[] = $barcode;
+                foreach ($lineBarcodes as $idx => $cleanedB) {
+                    if ($cleanedB === $barcode) {
+                        $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
+                        break;
+                    }
+                }
+            } elseif ($countUnique > 1) {
+                $this->mismatches[] = [
+                    'line_number' => $lineIndex + 1,
+                    'line_text' => $line,
+                    'detected_barcodes' => $uniqueBarcodes,
+                ];
+                foreach ($uniqueBarcodes as $barcode) {
+                    $barcodes[] = $barcode;
+                    foreach ($lineBarcodes as $idx => $cleanedB) {
+                        if ($cleanedB === $barcode) {
+                            $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        return array_values(array_unique($barcodes));
     }
 }

@@ -112,6 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const showRawDataBtn = document.getElementById('showRawDataBtn');
     const statSuspectedVal = document.getElementById('statSuspectedVal');
     const countSuspected = document.getElementById('countSuspected');
+    const reconciliationTime = document.getElementById('reconciliationTime');
 
     let currentData = {
         storeName: '',
@@ -158,6 +159,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentData.suspectedMatches = data.result.suspectedMatches || [];
                 currentData.terminalBarcodes = data.result.terminalBarcodes || [];
                 currentData.storeBarcodes = data.result.storeBarcodes || [];
+                currentData.elapsedTime = data.elapsed_time || null;
 
                 renderResults();
                 resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -183,6 +185,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderResults() {
         resultsSection.style.display = 'block';
         resultStoreName.textContent = currentData.storeName;
+
+        if (currentData.elapsedTime !== null) {
+            reconciliationTime.textContent = `İşlem ${currentData.elapsedTime} saniyede başarıyla tamamlandı.`;
+        } else {
+            reconciliationTime.textContent = 'İşlem tamamlandı.';
+        }
 
         const mCount = currentData.matched.length;
         const misCount = currentData.missingInStore.length;

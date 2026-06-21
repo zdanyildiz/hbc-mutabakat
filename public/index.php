@@ -130,6 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
             'barcode_stores' => $barcodeStores,
             'pdf_original_words' => $pdfExtractor->getBarcodeToOriginalMap(),
             'pdf_mismatches' => $pdfExtractor->getMismatches(),
+            'elapsed_time' => $elapsed,
         ]);
         exit;
     } catch (\Throwable $e) {
@@ -150,7 +151,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get-report') {
             /** @var array{
              *     matched: array<string>,
              *     missingInStore: array<string>,
-             *     extraInStore: array<string>
+             *     extraInStore: array<string>,
+             *     suspectedMatches?: array<array{terminal_barcode: string, store_barcode: string, distance: int}>
              * } $resultArray */
             $resultArray = json_decode($report['results_json'], true);
             echo json_encode([
@@ -175,7 +177,8 @@ if ($action === 'export-csv') {
             /** @var array{
              *     matched: array<string>,
              *     missingInStore: array<string>,
-             *     extraInStore: array<string>
+             *     extraInStore: array<string>,
+             *     suspectedMatches?: array<array{terminal_barcode: string, store_barcode: string, distance: int}>
              * } $data */
             $data = json_decode($report['results_json'], true);
             
@@ -337,7 +340,7 @@ if ($dbEnabled) {
                 <div class="results-header">
                     <div>
                         <h2 id="resultStoreName">Mutabakat Sonuçları</h2>
-                        <p class="timestamp">İşlem anlık olarak tamamlandı.</p>
+                        <p class="timestamp" id="reconciliationTime">İşlem anlık olarak tamamlandı.</p>
                     </div>
                     <div class="action-buttons" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                         <button type="button" class="btn btn-secondary" id="showRawDataBtn" style="background: rgba(37, 99, 235, 0.1); color: var(--secondary); border: 1px solid rgba(37, 99, 235, 0.25);">Ham Barkodları Göster</button>
