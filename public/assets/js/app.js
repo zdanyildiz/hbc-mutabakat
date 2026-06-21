@@ -208,28 +208,10 @@ document.addEventListener('DOMContentLoaded', () => {
         countExtra.textContent = exCount;
         countSuspected.textContent = susCount;
 
-        // Render PDF Mismatches Warning
+        // Render PDF Mismatches Warning (Disabled as per user request)
         const mismatchContainer = document.getElementById('mismatchContainer');
-        if (currentData.pdfMismatches && currentData.pdfMismatches.length > 0) {
-            let mismatchHtml = `<div class="mismatch-alert-box">
-                <div class="mismatch-alert-title">⚠️ PDF Satır Tutarsızlığı Tespit Edildi</div>
-                <p style="margin: 0 0 0.5rem 0; font-size: 0.85rem;">PDF dosyasındaki aynı satırda yer alan 'TemaTakipNo' ve 'Kargo Takip No' değerleri birbiriyle eşleşmemektedir. Firmayla irtibata geçip PDF'in doğruluğunu teyit etmeniz önerilir:</p>
-                <ul class="mismatch-alert-list">`;
-            
-            currentData.pdfMismatches.forEach(m => {
-                const barcodesStr = m.detected_barcodes.map(b => `<code>${escapeHtml(b)}</code>`).join(' ve ');
-                mismatchHtml += `<li class="mismatch-alert-item">
-                    <strong>Satır ${m.line_number}:</strong> PDF içinde ${barcodesStr} değerleri okundu. Orijinal Satır: <em>"${escapeHtml(m.line_text)}"</em>
-                </li>`;
-            });
-            
-            mismatchHtml += `</ul></div>`;
-            mismatchContainer.innerHTML = mismatchHtml;
-            mismatchContainer.style.display = 'block';
-        } else {
-            mismatchContainer.style.display = 'none';
-            mismatchContainer.innerHTML = '';
-        }
+        mismatchContainer.style.display = 'none';
+        mismatchContainer.innerHTML = '';
 
         buildTable();
     }
