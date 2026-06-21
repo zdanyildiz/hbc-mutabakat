@@ -480,9 +480,9 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Sırala (Turkish locale and numeric sort)
-        const sortedTerminal = [...currentData.terminalBarcodes].sort((a, b) => a.localeCompare(b, 'tr', { numeric: true }));
-        const sortedStore = [...currentData.storeBarcodes].sort((a, b) => a.localeCompare(b, 'tr', { numeric: true }));
+        // Sunucu tarafından zaten numerik küçükten büyüğe sıralı olarak gönderilir
+        const sortedTerminal = currentData.terminalBarcodes;
+        const sortedStore = currentData.storeBarcodes;
 
         const newWin = window.open('', '_blank');
         if (!newWin) {

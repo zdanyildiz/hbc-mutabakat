@@ -43,6 +43,23 @@ class ReconciliationResult
      */
     public function toArray(): array
     {
+        $sortFunc = function(string $a, string $b): int {
+            $cleanA = (string)preg_replace('/\D/', '', $a);
+            $cleanB = (string)preg_replace('/\D/', '', $b);
+            $lenA = strlen($cleanA);
+            $lenB = strlen($cleanB);
+            if ($lenA !== $lenB) {
+                return $lenA - $lenB;
+            }
+            return strcmp($cleanA, $cleanB);
+        };
+
+        $terminalBarcodes = $this->terminalBarcodes;
+        $storeBarcodes = $this->storeBarcodes;
+
+        usort($terminalBarcodes, $sortFunc);
+        usort($storeBarcodes, $sortFunc);
+
         return [
             'terminalCount' => count($this->terminalBarcodes),
             'storeCount' => count($this->storeBarcodes),
@@ -54,8 +71,8 @@ class ReconciliationResult
             'missingInStore' => $this->missingInStore,
             'extraInStore' => $this->extraInStore,
             'suspectedMatches' => $this->suspectedMatches,
-            'terminalBarcodes' => $this->terminalBarcodes,
-            'storeBarcodes' => $this->storeBarcodes,
+            'terminalBarcodes' => $terminalBarcodes,
+            'storeBarcodes' => $storeBarcodes,
         ];
     }
 }
