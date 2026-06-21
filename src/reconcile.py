@@ -105,7 +105,7 @@ def extract_ocr_mode(pdf_path: str) -> str:
                     sys.stderr.write(f"OCR_PROGRESS: Sayfa {idx + 1} OCR hatası: {str(exc)}\n")
                     sys.stderr.flush()
 
-        return "\n".join([r for r in full_text_parts if r is not None])
+        return "\f".join([r for r in full_text_parts if r is not None])
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

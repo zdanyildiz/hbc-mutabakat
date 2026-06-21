@@ -14,8 +14,37 @@ $config = require dirname(__DIR__) . '/config.php';
 
 $textRaw = '';
 $ocrRaw = '';
+$formattedText = '';
+$formattedOcr = '';
 $error = '';
 $fileName = '';
+
+function formatRawTextWithLineNumbers(string $rawText): string
+{
+    // Sayfaları form feed (\f) ile böl
+    $pages = explode("\f", $rawText);
+    $formatted = '';
+    
+    foreach ($pages as $pageIdx => $pageContent) {
+        $pageContent = trim($pageContent);
+        if ($pageContent === '') {
+            continue;
+        }
+        
+        $pageNumber = $pageIdx + 1;
+        $formatted .= "==================== SAYFA {$pageNumber} ====================\n\n";
+        
+        $lines = explode("\n", $pageContent);
+        foreach ($lines as $lineIdx => $line) {
+            $lineNumber = $lineIdx + 1;
+            // Sağdan hizalanmış şık satır numarası (Örn: "  5 | satır metni")
+            $formatted .= sprintf("%3d | %s\n", $lineNumber, $line);
+        }
+        $formatted .= "\n";
+    }
+    
+    return $formatted;
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file'])) {
     $file = $_FILES['pdf_file'];
@@ -28,9 +57,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file'])) {
 
             // Extract Text Mode Raw Output
             $textRaw = $pdfExtractor->extractRawText($pdfPath, 'text');
+            $formattedText = formatRawTextWithLineNumbers($textRaw);
 
             // Extract OCR Mode Raw Output
             $ocrRaw = $pdfExtractor->extractRawText($pdfPath, 'ocr');
+            $formattedOcr = formatRawTextWithLineNumbers($ocrRaw);
         } catch (\Throwable $e) {
             $error = $e->getMessage();
         }
@@ -367,7 +398,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file'])) {
                         <button class="copy-btn" onclick="copyToClipboard('textOutput')">Metni Kopyala 📋</button>
                     </div>
                     <div class="output-body">
-                        <pre id="textOutput"><?= htmlspecialchars($textRaw !== '' ? $textRaw : 'Herhangi bir metin çıkarılamadı.') ?></pre>
+                        <pre id="textOutput"><?= htmlspecialchars($formattedText !== '' ? $formattedText : 'Herhangi bir metin çıkarılamadı.') ?></pre>
                     </div>
                 </div>
 
@@ -380,7 +411,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file'])) {
                         <button class="copy-btn" onclick="copyToClipboard('ocrOutput')">Metni Kopyala 📋</button>
                     </div>
                     <div class="output-body">
-                        <pre id="ocrOutput"><?= htmlspecialchars($ocrRaw !== '' ? $ocrRaw : 'Herhangi bir OCR metni çıkarılamadı.') ?></pre>
+                        <pre id="ocrOutput"><?= htmlspecialchars($formattedOcr !== '' ? $formattedOcr : 'Herhangi bir OCR metni çıkarılamadı.') ?></pre>
                     </div>
                 </div>
             </div>
