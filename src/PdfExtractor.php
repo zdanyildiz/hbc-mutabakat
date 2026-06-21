@@ -266,8 +266,8 @@ class PdfExtractor
             // Her sayfayı tek tek bellek dostu şekilde işliyoruz
             for ($i = 0; $i < $pageCount; $i++) {
                 $pageImagick = new \Imagick();
-                // 150 DPI hız ve doğruluk için en dengeli çözünürlüktür (300 DPI'a göre 4 kat daha az piksel işlenir)
-                $pageImagick->setResolution(150, 150);
+                // 100 DPI hız ve Nginx timeout limitini aşmamak için en optimize çözünürlüktür
+                $pageImagick->setResolution(100, 100);
                 $pageImagick->readImage($filePath . '[' . $i . ']');
 
                 // Ön işleme: Grayscale + Binarization (OCR doğruluğunu artırır)
