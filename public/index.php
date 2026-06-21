@@ -28,7 +28,14 @@ $action = $_GET['action'] ?? '';
 // Handle Reconcile Request via AJAX
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
     header('Content-Type: application/json; charset=utf-8');
-    @set_time_limit(300);
+    header('X-Accel-Buffering: no'); // Nginx'in veriyi buffer'lamasını engeller, anında gönderir
+    @set_time_limit(600); // 10 dakika limit
+    
+    // PHP'nin çıktı önbelleğini kapatıp veriyi anlık göndermesini sağlıyoruz
+    while (ob_get_level() > 0) {
+        ob_end_flush();
+    }
+    ob_implicit_flush(true);
     
     try {
         if (!isset($_FILES['excel_file']) || !isset($_FILES['pdf_file'])) {

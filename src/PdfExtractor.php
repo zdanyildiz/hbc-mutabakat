@@ -265,9 +265,16 @@ class PdfExtractor
 
             // Her sayfayı tek tek bellek dostu şekilde işliyoruz
             for ($i = 0; $i < $pageCount; $i++) {
+                // Nginx/Apache bağlantısının kopmasını engellemek için veri akışını canlı tut
+                echo " ";
+                if (function_exists('ob_flush') && ob_get_level() > 0) {
+                    @ob_flush();
+                }
+                flush();
+
                 $pageImagick = new \Imagick();
-                // 100 DPI hız ve Nginx timeout limitini aşmamak için en optimize çözünürlüktür
-                $pageImagick->setResolution(100, 100);
+                // Kullanıcının isteği üzerine kesin okuma kalitesi için 300 DPI yapıldı
+                $pageImagick->setResolution(300, 300);
                 $pageImagick->readImage($filePath . '[' . $i . ']');
 
                 // Ön işleme: Grayscale + Binarization (OCR doğruluğunu artırır)
@@ -315,6 +322,13 @@ class PdfExtractor
         ];
 
         foreach ($images as $pagePath) {
+            // Nginx/Apache bağlantısının kopmasını engellemek için veri akışını canlı tut
+            echo " ";
+            if (function_exists('ob_flush') && ob_get_level() > 0) {
+                @ob_flush();
+            }
+            flush();
+
             try {
                 $ocr = new TesseractOCR($pagePath);
                 // @phpstan-ignore-next-line

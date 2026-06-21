@@ -142,8 +142,10 @@ document.addEventListener('DOMContentLoaded', () => {
             method: 'POST',
             body: formData
         })
-        .then(response => response.json())
-        .then(data => {
+        .then(response => response.text())
+        .then(text => {
+            const cleanedText = text.trim();
+            const data = JSON.parse(cleanedText);
             if (data.success) {
                 // Save data locally for rendering and exporting
                 currentData.storeName = data.store_name;
