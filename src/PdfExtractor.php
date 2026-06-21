@@ -380,10 +380,6 @@ class PdfExtractor
                 $ocr->lang('eng');
                 // @phpstan-ignore-next-line
                 $ocr->psm(6);
-                // @phpstan-ignore-next-line
-                $ocr->configFile('digits'); // Rakam whitelist konfigürasyonu
-                // @phpstan-ignore-next-line
-                $ocr->tessedit_char_whitelist('0123456789'); // Kesin rakam filtresi
                 $text = $ocr->run();
 
                 // Okuma bittikten sonra geçici resmi temizle
