@@ -109,6 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const tableSearch = document.getElementById('tableSearch');
     const filterButtons = document.querySelectorAll('.tab-btn');
     const downloadCsvBtn = document.getElementById('downloadCsvBtn');
+    const showRawDataBtn = document.getElementById('showRawDataBtn');
     const statSuspectedVal = document.getElementById('statSuspectedVal');
     const countSuspected = document.getElementById('countSuspected');
 
@@ -120,7 +121,9 @@ document.addEventListener('DOMContentLoaded', () => {
         barcodeStores: {},
         pdfOriginalWords: {},
         pdfMismatches: [],
-        suspectedMatches: []
+        suspectedMatches: [],
+        terminalBarcodes: [],
+        storeBarcodes: []
     };
 
     let activeFilter = 'all';
@@ -151,6 +154,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentData.pdfOriginalWords = data.pdf_original_words || {};
                 currentData.pdfMismatches = data.pdf_mismatches || [];
                 currentData.suspectedMatches = data.result.suspectedMatches || [];
+                currentData.terminalBarcodes = data.result.terminalBarcodes || [];
+                currentData.storeBarcodes = data.result.storeBarcodes || [];
 
                 renderResults();
                 resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -384,7 +389,23 @@ document.addEventListener('DOMContentLoaded', () => {
                         currentData.extraInStore = data.result.extraInStore;
                         currentData.pdfOriginalWords = {}; // clear for past db reports
                         currentData.pdfMismatches = []; // clear for past db reports
-                        currentData.suspectedMatches = []; // clear for past db reports
+                        currentData.suspectedMatches = data.result.suspectedMatches || [];
+                        
+                        // terminalBarcodes fallback
+                        if (data.result.terminalBarcodes) {
+                            currentData.terminalBarcodes = data.result.terminalBarcodes;
+                        } else {
+                            const termSuspects = (data.result.suspectedMatches || []).map(s => s.terminal_barcode);
+                            currentData.terminalBarcodes = [...new Set([...(data.result.matched || []), ...(data.result.missingInStore || []), ...termSuspects])];
+                        }
+                        
+                        // storeBarcodes fallback
+                        if (data.result.storeBarcodes) {
+                            currentData.storeBarcodes = data.result.storeBarcodes;
+                        } else {
+                            const storeSuspects = (data.result.suspectedMatches || []).map(s => s.store_barcode);
+                            currentData.storeBarcodes = [...new Set([...(data.result.matched || []), ...(data.result.extraInStore || []), ...storeSuspects])];
+                        }
 
                         renderResults();
                         resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -434,4 +455,173 @@ document.addEventListener('DOMContentLoaded', () => {
         // Tabloyu ve istatistikleri yeniden render et
         renderResults();
     };
+
+    // Show Raw Data in a new window/tab
+    showRawDataBtn.addEventListener('click', () => {
+        if (!currentData.terminalBarcodes || currentData.terminalBarcodes.length === 0) {
+            alert('Gösterilecek veri bulunamadı.');
+            return;
+        }
+
+        // Sırala (Turkish locale and numeric sort)
+        const sortedTerminal = [...currentData.terminalBarcodes].sort((a, b) => a.localeCompare(b, 'tr', { numeric: true }));
+        const sortedStore = [...currentData.storeBarcodes].sort((a, b) => a.localeCompare(b, 'tr', { numeric: true }));
+
+        const newWin = window.open('', '_blank');
+        if (!newWin) {
+            alert('Yeni pencere açılması pop-up engelleyici tarafından engellendi. Lütfen izin verin.');
+            return;
+        }
+
+        // HTML içeriğini oluştur
+        let excelRows = sortedTerminal.map(b => `<tr><td>${escapeHtml(b)}</td></tr>`).join('');
+        let pdfRows = sortedStore.map(b => `<tr><td>${escapeHtml(b)}</td></tr>`).join('');
+
+        const html = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ham Barkod Listesi - ${escapeHtml(currentData.storeName)}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #F8FAFC;
+            --text-primary: #1E293B;
+            --text-secondary: #475569;
+            --border-color: #E2E8F0;
+            --primary: #7C3AED;
+            --primary-hover: #6D28D9;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            padding: 2rem;
+            line-height: 1.5;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 1rem;
+        }
+        .title h1 { font-size: 1.5rem; font-weight: 700; color: #0F172A; }
+        .title p { font-size: 0.9rem; color: var(--text-secondary); margin-top: 0.25rem; }
+        .btn-print {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.6rem 1.2rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .btn-print:hover { background-color: var(--primary-hover); }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+        .col {
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .col-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .col-title { font-size: 1.1rem; font-weight: 700; color: #0F172A; }
+        .col-count {
+            background: #F1F5F9;
+            color: var(--text-secondary);
+            padding: 0.2rem 0.6rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            border-radius: 9999px;
+        }
+        .table-container {
+            overflow-y: auto;
+            flex: 1;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        td {
+            padding: 0.6rem 0.5rem;
+            border-bottom: 1px solid #F1F5F9;
+            font-family: monospace;
+            font-size: 0.95rem;
+            color: #334155;
+            letter-spacing: 0.5px;
+        }
+        tr:last-child td { border-bottom: none; }
+        @media print {
+            body { padding: 0; background: white; }
+            .btn-print { display: none; }
+            .col { box-shadow: none; border: none; padding: 0; max-height: none; }
+            .grid { gap: 1rem; }
+            .table-container { overflow-y: visible; }
+            .header { margin-bottom: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="title">
+            <h1>Ham Barkod Listesi</h1>
+            <p>Mağaza/Araç: <strong>${escapeHtml(currentData.storeName)}</strong> | Karşılaştırma yapılmamış, ham sıralı listeler.</p>
+        </div>
+        <button class="btn-print" onclick="window.print()">Yazdır / PDF Kaydet</button>
+    </div>
+    <div class="grid">
+        <div class="col">
+            <div class="col-header">
+                <span class="col-title">📊 El Terminali (Excel)</span>
+                <span class="col-count">${sortedTerminal.length} Barkod</span>
+            </div>
+            <div class="table-container">
+                <table>
+                    <tbody>
+                        ${excelRows || '<tr><td style="color:var(--text-muted); font-style:italic;">Barkod bulunamadı.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="col">
+            <div class="col-header">
+                <span class="col-title">📕 Mağaza PDF</span>
+                <span class="col-count">${sortedStore.length} Barkod</span>
+            </div>
+            <div class="table-container">
+                <table>
+                    <tbody>
+                        ${pdfRows || '<tr><td style="color:var(--text-muted); font-style:italic;">Barkod bulunamadı.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
+
+        newWin.document.write(html);
+        newWin.document.close();
+    });
 });

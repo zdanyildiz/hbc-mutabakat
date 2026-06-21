@@ -36,7 +36,9 @@ class ReconciliationResult
      *     matched: array<string>,
      *     missingInStore: array<string>,
      *     extraInStore: array<string>,
-     *     suspectedMatches: array<array{terminal_barcode: string, store_barcode: string, distance: int}>
+     *     suspectedMatches: array<array{terminal_barcode: string, store_barcode: string, distance: int}>,
+     *     terminalBarcodes: array<string>,
+     *     storeBarcodes: array<string>
      * }
      */
     public function toArray(): array
@@ -52,6 +54,8 @@ class ReconciliationResult
             'missingInStore' => $this->missingInStore,
             'extraInStore' => $this->extraInStore,
             'suspectedMatches' => $this->suspectedMatches,
+            'terminalBarcodes' => $this->terminalBarcodes,
+            'storeBarcodes' => $this->storeBarcodes,
         ];
     }
 }
