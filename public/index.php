@@ -132,8 +132,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
             'pdf_mismatches' => $pdfExtractor->getMismatches(),
         ]);
         exit;
-    } catch (\Exception $e) {
-        \App\Logger::log("HATA OLUŞTU: " . $e->getMessage() . " | Yer: " . $e->getFile() . ":" . $e->getLine());
+    } catch (\Throwable $e) {
+        \App\Logger::log("HATA OLUŞTU: [" . get_class($e) . "] " . $e->getMessage() . " | Yer: " . $e->getFile() . ":" . $e->getLine());
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
         exit;
     }
