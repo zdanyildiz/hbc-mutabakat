@@ -93,6 +93,8 @@ class PdfExtractor
             'o' => '0',
             'E' => '8',
             'S' => '5',
+            's' => '5',
+            'ü' => '4',
         ];
 
         foreach ($lines as $lineIndex => $line) {
@@ -250,7 +252,7 @@ class PdfExtractor
         $images = [];
         try {
             $imagick = new \Imagick();
-            $imagick->setResolution(150, 150);
+            $imagick->setResolution(300, 300);
             $imagick->readImage($filePath);
 
             $tempDir = dirname(__DIR__) . '/var/tmp';
@@ -259,6 +261,9 @@ class PdfExtractor
             }
 
             foreach ($imagick as $index => $page) {
+                // Görüntü ön işleme: Grayscale + Binarization (OCR doğruluğunu artırır)
+                $page->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
+                $page->thresholdImage(0.5 * \Imagick::getQuantum());
                 $page->setImageFormat('png');
                 $pagePath = $tempDir . '/page_' . uniqid() . '_' . $index . '.png';
                 $page->writeImage($pagePath);
@@ -287,6 +292,8 @@ class PdfExtractor
             'o' => '0',
             'E' => '8',
             'S' => '5',
+            's' => '5',
+            'ü' => '4',
         ];
 
         foreach ($images as $pagePath) {
@@ -294,6 +301,10 @@ class PdfExtractor
                 $ocr = new TesseractOCR($pagePath);
                 // @phpstan-ignore-next-line
                 $ocr->lang('tur', 'eng');
+                // @phpstan-ignore-next-line
+                $ocr->psm(6);
+                // @phpstan-ignore-next-line
+                $ocr->configFile('digits');
                 $text = $ocr->run();
 
                 // Okuma bittikten sonra geçici resmi temizle

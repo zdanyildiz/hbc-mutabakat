@@ -109,6 +109,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const tableSearch = document.getElementById('tableSearch');
     const filterButtons = document.querySelectorAll('.tab-btn');
     const downloadCsvBtn = document.getElementById('downloadCsvBtn');
+    const statSuspectedVal = document.getElementById('statSuspectedVal');
+    const countSuspected = document.getElementById('countSuspected');
 
     let currentData = {
         storeName: '',
@@ -117,7 +119,8 @@ document.addEventListener('DOMContentLoaded', () => {
         extraInStore: [],
         barcodeStores: {},
         pdfOriginalWords: {},
-        pdfMismatches: []
+        pdfMismatches: [],
+        suspectedMatches: []
     };
 
     let activeFilter = 'all';
@@ -147,6 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentData.barcodeStores = data.barcode_stores || {};
                 currentData.pdfOriginalWords = data.pdf_original_words || {};
                 currentData.pdfMismatches = data.pdf_mismatches || [];
+                currentData.suspectedMatches = data.result.suspectedMatches || [];
 
                 renderResults();
                 resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -176,15 +180,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const mCount = currentData.matched.length;
         const misCount = currentData.missingInStore.length;
         const exCount = currentData.extraInStore.length;
+        const susCount = currentData.suspectedMatches.length;
 
         statMatchedVal.textContent = mCount;
         statMissingVal.textContent = misCount;
         statExtraVal.textContent = exCount;
+        statSuspectedVal.textContent = susCount;
 
-        countAll.textContent = mCount + misCount + exCount;
+        countAll.textContent = mCount + misCount + exCount + susCount;
         countMatched.textContent = mCount;
         countMissing.textContent = misCount;
         countExtra.textContent = exCount;
+        countSuspected.textContent = susCount;
 
         // Render PDF Mismatches Warning
         const mismatchContainer = document.getElementById('mismatchContainer');
@@ -266,6 +273,38 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
+        // Suspected Items (Sarı/Amber)
+        if (activeFilter === 'all' || activeFilter === 'suspected') {
+            currentData.suspectedMatches.forEach((suspect, idx) => {
+                const barcode = suspect.terminal_barcode;
+                const storeBarcode = suspect.store_barcode;
+                const distance = suspect.distance;
+                if (searchVal === '' || barcode.toLowerCase().includes(searchVal) || storeBarcode.toLowerCase().includes(searchVal)) {
+                    const storeName = currentData.barcodeStores[barcode] || currentData.barcodeStores[storeBarcode] || 'Bilinmeyen Mağaza';
+                    rowsHtml += `<tr class="row-suspected" data-type="suspected" id="suspected-row-${idx}">
+                        <td class="font-semibold">
+                            ${escapeHtml(barcode)}
+                            <div class="suspected-detail">
+                                PDF Barkodu: <code>${escapeHtml(storeBarcode)}</code>
+                                <span class="levenshtein-badge">🔍 ${distance} karakter fark</span>
+                            </div>
+                        </td>
+                        <td class="text-secondary">${escapeHtml(storeName)}</td>
+                        <td><span class="badge badge-suspected">Şüpheli</span></td>
+                        <td>
+                            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                                <span class="text-muted" style="font-size:0.85rem;">Yakın eşleşme bulundu</span>
+                                <button type="button" class="btn-approve" onclick="approveSuspected(${idx}, this)">
+                                    ✅ Manuel Onayla
+                                </button>
+                            </div>
+                        </td>
+                    </tr>`;
+                    matchFound = true;
+                }
+            });
+        }
+
         // Matched Items (Yeşil)
         if (activeFilter === 'all' || activeFilter === 'matched') {
             currentData.matched.forEach(barcode => {
@@ -317,6 +356,9 @@ document.addEventListener('DOMContentLoaded', () => {
         currentData.matched.forEach(barcode => {
             csvContent += `"${barcode}","Eşleşti","Sorunsuz eşleşti"\n`;
         });
+        currentData.suspectedMatches.forEach(suspect => {
+            csvContent += `"${suspect.terminal_barcode}","Şüpheli Eşleşme","PDF Barkodu: ${suspect.store_barcode}, Mesafe: ${suspect.distance}"\n`;
+        });
 
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
@@ -342,6 +384,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         currentData.extraInStore = data.result.extraInStore;
                         currentData.pdfOriginalWords = {}; // clear for past db reports
                         currentData.pdfMismatches = []; // clear for past db reports
+                        currentData.suspectedMatches = []; // clear for past db reports
 
                         renderResults();
                         resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -364,4 +407,31 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#039;");
     }
+
+    // Global approve function for suspected matches
+    window.approveSuspected = function(idx, btn) {
+        const suspect = currentData.suspectedMatches[idx];
+        if (!suspect) return;
+
+        // Şüpheli listesinden çıkar
+        currentData.suspectedMatches.splice(idx, 1);
+
+        // Eşleşmiş listeye ekle
+        currentData.matched.push(suspect.terminal_barcode);
+
+        // Eksiklerden de temizle (eğer varsa)
+        const missingIdx = currentData.missingInStore.indexOf(suspect.terminal_barcode);
+        if (missingIdx > -1) {
+            currentData.missingInStore.splice(missingIdx, 1);
+        }
+
+        // Fazlalardan da temizle (eğer varsa)
+        const extraIdx = currentData.extraInStore.indexOf(suspect.store_barcode);
+        if (extraIdx > -1) {
+            currentData.extraInStore.splice(extraIdx, 1);
+        }
+
+        // Tabloyu ve istatistikleri yeniden render et
+        renderResults();
+    };
 });

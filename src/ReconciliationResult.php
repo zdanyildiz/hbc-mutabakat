@@ -12,13 +12,15 @@ class ReconciliationResult
      * @param array<string> $matched
      * @param array<string> $missingInStore
      * @param array<string> $extraInStore
+     * @param array<array{terminal_barcode: string, store_barcode: string, distance: int}> $suspectedMatches
      */
     public function __construct(
         public readonly array $terminalBarcodes,
         public readonly array $storeBarcodes,
         public readonly array $matched,
         public readonly array $missingInStore,
-        public readonly array $extraInStore
+        public readonly array $extraInStore,
+        public readonly array $suspectedMatches = []
     ) {}
 
     /**
@@ -30,9 +32,11 @@ class ReconciliationResult
      *     matchedCount: int,
      *     missingCount: int,
      *     extraCount: int,
+     *     suspectedCount: int,
      *     matched: array<string>,
      *     missingInStore: array<string>,
-     *     extraInStore: array<string>
+     *     extraInStore: array<string>,
+     *     suspectedMatches: array<array{terminal_barcode: string, store_barcode: string, distance: int}>
      * }
      */
     public function toArray(): array
@@ -43,9 +47,11 @@ class ReconciliationResult
             'matchedCount' => count($this->matched),
             'missingCount' => count($this->missingInStore),
             'extraCount' => count($this->extraInStore),
+            'suspectedCount' => count($this->suspectedMatches),
             'matched' => $this->matched,
             'missingInStore' => $this->missingInStore,
             'extraInStore' => $this->extraInStore,
+            'suspectedMatches' => $this->suspectedMatches,
         ];
     }
 }

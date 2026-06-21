@@ -177,6 +177,11 @@ if ($action === 'export-csv') {
                 foreach ($data['matched'] as $barcode) {
                     fputcsv($output, [$barcode, 'Eşleşti']);
                 }
+                if (isset($data['suspectedMatches'])) {
+                    foreach ($data['suspectedMatches'] as $suspect) {
+                        fputcsv($output, [$suspect['terminal_barcode'], 'Şüpheli Eşleşme (PDF: ' . $suspect['store_barcode'] . ', Mesafe: ' . $suspect['distance'] . ')']);
+                    }
+                }
                 fclose($output);
             }
             exit;
@@ -338,6 +343,11 @@ if ($dbEnabled) {
                         <div class="stat-label">Fazla Koliler</div>
                         <div class="stat-desc">PDF'te var, Terminalde yok</div>
                     </div>
+                    <div class="stat-box stat-suspected">
+                        <div class="stat-value" id="statSuspectedVal">0</div>
+                        <div class="stat-label">Şüpheli Eşleşmeler</div>
+                        <div class="stat-desc">Yakın benzerlik, manuel onay bekliyor</div>
+                    </div>
                 </div>
 
                 <!-- Filter & Search Bar -->
@@ -346,6 +356,7 @@ if ($dbEnabled) {
                         <button class="tab-btn active" data-filter="all">Tümü (<span id="countAll">0</span>)</button>
                         <button class="tab-btn tab-missing" data-filter="missing">Eksikler (<span id="countMissing">0</span>)</button>
                         <button class="tab-btn tab-extra" data-filter="extra">Fazlalar (<span id="countExtra">0</span>)</button>
+                        <button class="tab-btn tab-suspected" data-filter="suspected">Şüpheli (<span id="countSuspected">0</span>)</button>
                         <button class="tab-btn tab-matched" data-filter="matched">Eşleşenler (<span id="countMatched">0</span>)</button>
                     </div>
                     <div class="search-box">
