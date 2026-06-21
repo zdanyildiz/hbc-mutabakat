@@ -250,27 +250,45 @@ class PdfExtractor
         }
 
         $images = [];
+        $tempDir = dirname(__DIR__) . '/var/tmp';
+        if (!is_dir($tempDir)) {
+            mkdir($tempDir, 0777, true);
+        }
+
         try {
-            $imagick = new \Imagick();
-            $imagick->setResolution(200, 200);
-            $imagick->readImage($filePath);
+            // PDF'in sayfa sayısını hızlıca öğrenmek için pingImage kullanıyoruz
+            $pingImagick = new \Imagick();
+            $pingImagick->pingImage($filePath);
+            $pageCount = $pingImagick->getNumberImages();
+            $pingImagick->clear();
+            $pingImagick->destroy();
 
-            $tempDir = dirname(__DIR__) . '/var/tmp';
-            if (!is_dir($tempDir)) {
-                mkdir($tempDir, 0777, true);
-            }
+            // Her sayfayı tek tek bellek dostu şekilde işliyoruz
+            for ($i = 0; $i < $pageCount; $i++) {
+                $pageImagick = new \Imagick();
+                // 150 DPI hız ve doğruluk için en dengeli çözünürlüktür (300 DPI'a göre 4 kat daha az piksel işlenir)
+                $pageImagick->setResolution(150, 150);
+                $pageImagick->readImage($filePath . '[' . $i . ']');
 
-            foreach ($imagick as $index => $page) {
-                // Görüntü ön işleme: Grayscale + Binarization (OCR doğruluğunu artırır)
-                $page->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
-                $page->thresholdImage(0.5 * \Imagick::getQuantum());
-                $page->setImageFormat('png');
-                $pagePath = $tempDir . '/page_' . uniqid() . '_' . $index . '.png';
-                $page->writeImage($pagePath);
+                // Ön işleme: Grayscale + Binarization (OCR doğruluğunu artırır)
+                $pageImagick->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
+                $pageImagick->thresholdImage(0.5 * \Imagick::getQuantum());
+                $pageImagick->setImageFormat('png');
+
+                $pagePath = $tempDir . '/page_' . uniqid() . '_' . $i . '.png';
+                $pageImagick->writeImage($pagePath);
                 $images[] = $pagePath;
+
+                $pageImagick->clear();
+                $pageImagick->destroy();
             }
-            $imagick->clear();
         } catch (\Exception $e) {
+            // Hata durumunda oluşturulmuş geçici resimleri temizle
+            foreach ($images as $img) {
+                if (file_exists($img)) {
+                    unlink($img);
+                }
+            }
             throw new \RuntimeException("PDF görsele dönüştürülürken hata oluştu: " . $e->getMessage());
         }
 
@@ -304,7 +322,7 @@ class PdfExtractor
                 // @phpstan-ignore-next-line
                 $ocr->psm(6);
                 // @phpstan-ignore-next-line
-                $ocr->configFile('digits');
+                $ocr->allow(range(0, 9)); // Sadece 0-9 arası rakamları tanıması söylenerek harf arama süresi sıfırlanır
                 $text = $ocr->run();
 
                 // Okuma bittikten sonra geçici resmi temizle
@@ -365,10 +383,10 @@ class PdfExtractor
                         foreach ($uniqueBarcodes as $barcode) {
                             $barcodes[] = $barcode;
                             foreach ($lineBarcodes as $idx => $cleanedB) {
-                                if ($cleanedB === $barcode) {
-                                    $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
-                                    break;
-                                }
+                                  if ($cleanedB === $barcode) {
+                                      $this->barcodeToOriginalMap[$barcode] = $lineWords[$idx];
+                                      break;
+                                  }
                             }
                         }
                     }
