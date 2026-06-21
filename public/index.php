@@ -446,8 +446,9 @@ if ($dbEnabled) {
         </main>
 
         <!-- Footer -->
-        <footer class="app-footer">
+        <footer class="app-footer" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
             <p>&copy; <?= date('Y') ?> HBC Mutabakat.</p>
+            <p style="font-size: 0.8rem; color: var(--text-muted);">Aktif Sunucu IP: <strong><?= $_SERVER['SERVER_ADDR'] ?? 'Bilinmiyor' ?></strong></p>
         </footer>
     </div>
 
