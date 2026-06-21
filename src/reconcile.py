@@ -40,11 +40,14 @@ def levenshtein(s1: str, s2: str) -> int:
 
 def ocr_page(img_path: str) -> str:
     try:
+        import os
+        custom_env = os.environ.copy()
+        custom_env["OMP_THREAD_LIMIT"] = "1"
         result = subprocess.run([
             "tesseract", img_path, "stdout",
             "--psm", "6",
             "-c", "tessedit_char_whitelist=0123456789LIM- "
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", timeout=30)
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", timeout=30, env=custom_env)
         return result.stdout
     except Exception as e:
         sys.stderr.write(f"Tesseract error on {img_path}: {str(e)}\n")
@@ -80,7 +83,7 @@ def extract_ocr_mode(pdf_path: str) -> str:
             raise RuntimeError("No pages extracted from PDF.")
 
         full_text_parts = [None] * len(page_images)
-        max_workers = min(4, len(page_images))
+        max_workers = min(2, len(page_images))
 
         sys.stderr.write(f"OCR_PROGRESS: Toplam {len(page_images)} sayfa görsele dönüştürüldü. OCR işlemi başlıyor...\n")
         sys.stderr.flush()
