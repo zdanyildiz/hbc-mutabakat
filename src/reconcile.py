@@ -79,14 +79,30 @@ def extract_ocr_mode(pdf_path: str) -> str:
         if not page_images:
             raise RuntimeError("No pages extracted from PDF.")
 
-        full_text_parts = []
+        full_text_parts = [None] * len(page_images)
         max_workers = min(4, len(page_images))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = executor.map(ocr_page, page_images)
-            for res in results:
-                full_text_parts.append(res)
 
-        return "\n".join(full_text_parts)
+        sys.stderr.write(f"OCR_PROGRESS: Toplam {len(page_images)} sayfa görsele dönüştürüldü. OCR işlemi başlıyor...\n")
+        sys.stderr.flush()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_index = {
+                executor.submit(ocr_page, img): idx 
+                for idx, img in enumerate(page_images)
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_index):
+                idx = future_to_index[future]
+                try:
+                    res = future.result()
+                    full_text_parts[idx] = res
+                    sys.stderr.write(f"OCR_PROGRESS: Sayfa {idx + 1} OCR okuması bitti\n")
+                    sys.stderr.flush()
+                except Exception as exc:
+                    sys.stderr.write(f"OCR_PROGRESS: Sayfa {idx + 1} OCR hatası: {str(exc)}\n")
+                    sys.stderr.flush()
+
+        return "\n".join([r for r in full_text_parts if r is not None])
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

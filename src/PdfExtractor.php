@@ -194,31 +194,107 @@ class PdfExtractor
             return null;
         }
 
-        $commands = [
-            'python3 ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath),
-            'python ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath)
+        $pythonExecutable = 'python3';
+        // Check python3 availability
+        $checkCommand = PHP_OS_FAMILY === 'Windows' ? 'where python3' : 'which python3';
+        $hasPython3 = (string)shell_exec($checkCommand);
+        if (trim($hasPython3) === '') {
+            $pythonExecutable = 'python';
+        }
+
+        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
+
+        $descriptorspec = [
+            0 => ["pipe", "r"], // stdin
+            1 => ["pipe", "w"], // stdout
+            2 => ["pipe", "w"]  // stderr
         ];
 
-        foreach ($commands as $cmd) {
-            $output = (string)shell_exec($cmd . ' 2>&1');
-            if (trim($output) === '') {
-                continue;
+        $process = proc_open($cmd, $descriptorspec, $pipes);
+
+        if (!is_resource($process)) {
+            \App\Logger::log("[PdfExtractor-Python] HATA: Süreç başlatılamadı.");
+            return null;
+        }
+
+        // Set non-blocking mode for stdout and stderr
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $stdoutData = '';
+        $stderrData = '';
+
+        while (true) {
+            $read = [$pipes[1], $pipes[2]];
+            $write = null;
+            $except = null;
+
+            $numChanged = stream_select($read, $write, $except, 1, 0);
+
+            if ($numChanged === false) {
+                break;
             }
 
-            $data = json_decode($output, true);
-            if (is_array($data) && isset($data['success']) && $data['success'] === true) {
-                $this->barcodeToOriginalMap = $data['barcode_to_original'] ?? [];
-                $this->mismatches = $data['mismatches'] ?? [];
-                
-                $timeLog = isset($data['elapsed_time']) ? "Süre: {$data['elapsed_time']} sn" : "";
-                \App\Logger::log("[PdfExtractor-Python] Başarıyla tamamlandı - Mod: {$mode} | {$timeLog}");
-                
-                return $data['barcodes'] ?? [];
-            } else {
-                \App\Logger::log("[PdfExtractor-Python] Hata veya uyumsuz çıktı: " . trim(substr($output, 0, 200)));
+            if ($numChanged > 0) {
+                foreach ($read as $stream) {
+                    if ($stream === $pipes[1]) {
+                        $chunk = fread($pipes[1], 4096);
+                        if ($chunk !== false) {
+                            $stdoutData .= $chunk;
+                        }
+                    } elseif ($stream === $pipes[2]) {
+                        $chunk = fread($pipes[2], 4096);
+                        if ($chunk !== false && $chunk !== '') {
+                            $stderrData .= $chunk;
+                            // Parse live stderr and log to app.log instantly
+                            $lines = explode("\n", $chunk);
+                            foreach ($lines as $line) {
+                                $line = trim($line);
+                                if ($line !== '') {
+                                    if (str_contains($line, 'OCR_PROGRESS:')) {
+                                        $cleanLog = str_replace('OCR_PROGRESS:', '', $line);
+                                        \App\Logger::log("[PdfExtractor-Python-Live]" . $cleanLog);
+                                    } else {
+                                        \App\Logger::log("[PdfExtractor-Python-Stderr] " . $line);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            $status = proc_get_status($process);
+            if (!$status['running']) {
+                break;
             }
         }
 
+        // Read remaining outputs
+        while (($chunk = fread($pipes[1], 4096)) !== '' && $chunk !== false) {
+            $stdoutData .= $chunk;
+        }
+        while (($chunk = fread($pipes[2], 4096)) !== '' && $chunk !== false) {
+            $stderrData .= $chunk;
+        }
+
+        fclose($pipes[0]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+
+        $data = json_decode(trim($stdoutData), true);
+        if (is_array($data) && isset($data['success']) && $data['success'] === true) {
+            $this->barcodeToOriginalMap = $data['barcode_to_original'] ?? [];
+            $this->mismatches = $data['mismatches'] ?? [];
+            
+            $timeLog = isset($data['elapsed_time']) ? "Süre: {$data['elapsed_time']} sn" : "";
+            \App\Logger::log("[PdfExtractor-Python] Başarıyla tamamlandı - Mod: {$mode} | {$timeLog}");
+            
+            return $data['barcodes'] ?? [];
+        }
+
+        \App\Logger::log("[PdfExtractor-Python] Hata veya uyumsuz çıktı: " . trim(substr($stdoutData, 0, 200)));
         return null;
     }
 
