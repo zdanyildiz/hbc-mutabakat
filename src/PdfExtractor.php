@@ -133,33 +133,32 @@ class PdfExtractor
                 continue;
             }
 
-            // Split line by whitespace/tabs to process word by word
-            $words = preg_split('/[\s\t]+/', $line);
-            if ($words === false) {
-                continue;
-            }
+            // Extract candidate barcodes (allowing spaces/hyphens and OCR characters)
+            preg_match_all('/\b(?:[A-Za-z0-9\x{0131}\x{0130}!\[\]][\s-]*){14,30}\b/u', $line, $matches);
 
             /** @var array<string> $lineBarcodes */
             $lineBarcodes = [];
             /** @var array<string> $lineWords */
             $lineWords = [];
 
-            foreach ($words as $word) {
-                $word = trim($word);
-                if ($word === '') {
-                    continue;
-                }
+            if (!empty($matches[0])) {
+                foreach ($matches[0] as $matchedWord) {
+                    $matchedWord = trim($matchedWord);
+                    if ($matchedWord === '') {
+                        continue;
+                    }
 
-                // 1) Apply OCR character mapping
-                $converted = strtr($word, $ocrMap);
+                    // 1) Apply OCR character mapping
+                    $converted = strtr($matchedWord, $ocrMap);
 
-                // 2) Remove any non-digit characters
-                $cleaned = preg_replace('/\D/', '', $converted);
+                    // 2) Remove any non-digit characters
+                    $cleaned = preg_replace('/\D/', '', $converted);
 
-                // 3) Validate if it fits tracking barcode lengths (16 to 20 digits)
-                if ($cleaned !== null && strlen($cleaned) >= 16 && strlen($cleaned) <= 20) {
-                    $lineBarcodes[] = $cleaned;
-                    $lineWords[] = $word;
+                    // 3) Validate if it fits tracking barcode lengths (16 to 20 digits)
+                    if ($cleaned !== null && strlen($cleaned) >= 16 && strlen($cleaned) <= 20) {
+                        $lineBarcodes[] = $cleaned;
+                        $lineWords[] = $matchedWord;
+                    }
                 }
             }
 
@@ -397,28 +396,32 @@ class PdfExtractor
                         continue;
                     }
 
-                    $words = preg_split('/[\s\t]+/', $line);
-                    if ($words === false) {
-                        continue;
-                    }
+                    // Extract candidate barcodes (allowing spaces/hyphens and OCR characters)
+                    preg_match_all('/\b(?:[A-Za-z0-9\x{0131}\x{0130}!\[\]][\s-]*){14,30}\b/u', $line, $matches);
 
                     /** @var array<string> $lineBarcodes */
                     $lineBarcodes = [];
                     /** @var array<string> $lineWords */
                     $lineWords = [];
 
-                    foreach ($words as $word) {
-                        $word = trim($word);
-                        if ($word === '') {
-                            continue;
-                        }
+                    if (!empty($matches[0])) {
+                        foreach ($matches[0] as $matchedWord) {
+                            $matchedWord = trim($matchedWord);
+                            if ($matchedWord === '') {
+                                continue;
+                            }
 
-                        $converted = strtr($word, $ocrMap);
-                        $cleaned = preg_replace('/\D/', '', $converted);
+                            // 1) Apply OCR character mapping
+                            $converted = strtr($matchedWord, $ocrMap);
 
-                        if ($cleaned !== null && strlen($cleaned) >= 16 && strlen($cleaned) <= 20) {
-                            $lineBarcodes[] = $cleaned;
-                            $lineWords[] = $word;
+                            // 2) Remove any non-digit characters
+                            $cleaned = preg_replace('/\D/', '', $converted);
+
+                            // 3) Validate if it fits tracking barcode lengths (16 to 20 digits)
+                            if ($cleaned !== null && strlen($cleaned) >= 16 && strlen($cleaned) <= 20) {
+                                $lineBarcodes[] = $cleaned;
+                                $lineWords[] = $matchedWord;
+                            }
                         }
                     }
 
