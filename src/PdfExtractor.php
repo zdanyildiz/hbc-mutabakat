@@ -66,6 +66,9 @@ class PdfExtractor
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
 
+        $pdfStart = microtime(true);
+        \App\Logger::log("[PdfExtractor-Text] PDF okuma başladı: " . basename($filePath));
+
         $text = '';
         $usedPdftotext = false;
 
@@ -74,21 +77,29 @@ class PdfExtractor
         $hasPdftotext = shell_exec($checkCommand);
 
         if ($hasPdftotext !== null && trim($hasPdftotext) !== '') {
+            $pdftotextStart = microtime(true);
             // -layout parametresi satır yapısını korur, satır tutarsızlığı kontrolleri için gereklidir
             $output = shell_exec('pdftotext -layout ' . escapeshellarg($filePath) . ' -');
             if ($output !== null) {
                 $text = $output;
                 $usedPdftotext = true;
+                $pdftotextElapsed = round(microtime(true) - $pdftotextStart, 4);
+                \App\Logger::log("[PdfExtractor-Text] C++ pdftotext aracı kullanıldı - Süre: {$pdftotextElapsed} saniye");
             }
         }
 
         // 2. Yol (Fallback): pdftotext yoksa Smalot PdfParser kullan
         if (!$usedPdftotext) {
+            \App\Logger::log("[PdfExtractor-Text] UYARI: pdftotext bulunamadı veya çalışmadı, Smalot PDF Parser fallback devreye giriyor.");
+            $smalotStart = microtime(true);
             $parser = new Parser();
             try {
                 $pdf = $parser->parseFile($filePath);
                 $text = $pdf->getText();
+                $smalotElapsed = round(microtime(true) - $smalotStart, 4);
+                \App\Logger::log("[PdfExtractor-Text] Smalot PDF Parser kullanıldı - Süre: {$smalotElapsed} saniye");
             } catch (\Exception $e) {
+                \App\Logger::log("[PdfExtractor-Text] Smalot HATA: " . $e->getMessage());
                 throw new \RuntimeException("PDF dosyası ayrıştırılamadı: " . $e->getMessage());
             }
         }
@@ -190,8 +201,12 @@ class PdfExtractor
             }
         }
 
+        $uniqueBarcodes = array_values(array_unique($barcodes));
+        $elapsed = round(microtime(true) - $pdfStart, 4);
+        \App\Logger::log("[PdfExtractor-Text] Tamamlandı - Süre: {$elapsed} saniye | Toplam Satır: " . count($lines) . " | Benzersiz Barkod: " . count($uniqueBarcodes));
+
         // Remove duplicates and re-index
-        return array_values(array_unique($barcodes));
+        return $uniqueBarcodes;
     }
 
     /**
@@ -268,6 +283,9 @@ class PdfExtractor
             throw new \RuntimeException("PDF görsel dönüşümü için 'Imagick' PHP eklentisi kurulu olmalıdır.");
         }
 
+        $ocrStart = microtime(true);
+        \App\Logger::log("[PdfExtractor-OCR] OCR işlemi başladı: " . basename($filePath));
+
         $images = [];
         $tempDir = dirname(__DIR__) . '/var/tmp';
         if (!is_dir($tempDir)) {
@@ -282,8 +300,11 @@ class PdfExtractor
             $pingImagick->clear();
             $pingImagick->destroy();
 
+            \App\Logger::log("[PdfExtractor-OCR] Toplam Sayfa Sayısı: {$pageCount}");
+
             // Her sayfayı tek tek bellek dostu şekilde işliyoruz
             for ($i = 0; $i < $pageCount; $i++) {
+                $pageStart = microtime(true);
                 // Nginx/Apache bağlantısının kopmasını engellemek için veri akışını canlı tut
                 echo " ";
                 if (function_exists('ob_flush') && ob_get_level() > 0) {
@@ -307,8 +328,12 @@ class PdfExtractor
 
                 $pageImagick->clear();
                 $pageImagick->destroy();
+
+                $pageElapsed = round(microtime(true) - $pageStart, 4);
+                \App\Logger::log("[PdfExtractor-OCR] Sayfa {$i} görsele çevrildi - Süre: {$pageElapsed} saniye");
             }
         } catch (\Exception $e) {
+            \App\Logger::log("[PdfExtractor-OCR] Imagick HATA: " . $e->getMessage());
             // Hata durumunda oluşturulmuş geçici resimleri temizle
             foreach ($images as $img) {
                 if (file_exists($img)) {
@@ -340,7 +365,7 @@ class PdfExtractor
             'ü' => '4',
         ];
 
-        foreach ($images as $pagePath) {
+        foreach ($images as $index => $pagePath) {
             // Nginx/Apache bağlantısının kopmasını engellemek için veri akışını canlı tut
             echo " ";
             if (function_exists('ob_flush') && ob_get_level() > 0) {
@@ -349,6 +374,7 @@ class PdfExtractor
             flush();
 
             try {
+                $tessStart = microtime(true);
                 $ocr = new TesseractOCR($pagePath);
                 // @phpstan-ignore-next-line
                 $ocr->lang('eng');
@@ -364,6 +390,9 @@ class PdfExtractor
                 if (file_exists($pagePath)) {
                     unlink($pagePath);
                 }
+
+                $tessElapsed = round(microtime(true) - $tessStart, 4);
+                \App\Logger::log("[PdfExtractor-OCR] Sayfa {$index} Tesseract okuması bitti - Süre: {$tessElapsed} saniye");
 
                 $lines = explode("\n", $text);
                 foreach ($lines as $lineIndex => $line) {
@@ -427,6 +456,7 @@ class PdfExtractor
                     }
                 }
             } catch (\Exception $e) {
+                \App\Logger::log("[PdfExtractor-OCR] Tesseract HATA: " . $e->getMessage());
                 if (file_exists($pagePath)) {
                     unlink($pagePath);
                 }
@@ -434,6 +464,10 @@ class PdfExtractor
             }
         }
 
-        return array_values(array_unique($barcodes));
+        $uniqueBarcodes = array_values(array_unique($barcodes));
+        $elapsed = round(microtime(true) - $ocrStart, 4);
+        \App\Logger::log("[PdfExtractor-OCR] Tamamlandı - Toplam Süre: {$elapsed} saniye | Benzersiz Barkod: " . count($uniqueBarcodes));
+
+        return $uniqueBarcodes;
     }
 }

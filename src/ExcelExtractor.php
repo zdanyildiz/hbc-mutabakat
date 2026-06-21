@@ -21,6 +21,9 @@ class ExcelExtractor
             throw new \InvalidArgumentException("Excel/CSV dosyası bulunamadı: {$filePath}");
         }
 
+        $exStart = microtime(true);
+        \App\Logger::log("[ExcelExtractor] Dosya okuma başladı: " . basename($filePath));
+
         // Tüm hücre değerlerini doğrudan metin (string) olarak bağla. 
         // Bu sayede 18 haneli büyük sayılar float'a dönüşüp yuvarlanmaz veya scientific notation (1.63E+17) yüzünden yutulmaz.
         \PhpOffice\PhpSpreadsheet\Cell\Cell::setValueBinder(new \PhpOffice\PhpSpreadsheet\Cell\StringValueBinder());
@@ -29,10 +32,12 @@ class ExcelExtractor
             $spreadsheet = IOFactory::load($filePath);
             $worksheet = $spreadsheet->getActiveSheet();
         } catch (\Exception $e) {
+            \App\Logger::log("[ExcelExtractor] HATA: " . $e->getMessage());
             throw new \RuntimeException("Excel/CSV dosyası yüklenirken hata oluştu: " . $e->getMessage());
         }
 
         $barcodes = [];
+        $rowIndex = 0;
 
         foreach ($worksheet->getRowIterator() as $rowIndex => $row) {
             if ($rowIndex === 1) {
@@ -59,7 +64,11 @@ class ExcelExtractor
             }
         }
 
-        return array_values(array_unique($barcodes));
+        $uniqueBarcodes = array_values(array_unique($barcodes));
+        $elapsed = round(microtime(true) - $exStart, 4);
+        \App\Logger::log("[ExcelExtractor] Tamamlandı - Süre: {$elapsed} saniye | Toplam Satır: {$rowIndex} | Benzersiz Barkod: " . count($uniqueBarcodes));
+
+        return $uniqueBarcodes;
     }
 
     /**

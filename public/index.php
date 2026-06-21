@@ -37,6 +37,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
     }
     ob_implicit_flush(true);
     
+    $startTime = microtime(true);
+    \App\Logger::log("----------------------------------------------------------------");
+    \App\Logger::log("MUTABAKAT BAŞLADI - Plaka/Mağaza: " . ($_POST['store_name'] ?? 'Belirtilmemiş'));
+    
     try {
         if (!isset($_FILES['excel_file']) || !isset($_FILES['pdf_file'])) {
             echo json_encode(['success' => false, 'message' => 'Lütfen hem Excel/CSV hem de PDF dosyasını yükleyin.']);
@@ -107,8 +111,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
 
         $savedId = null;
         if ($dbEnabled) {
+            $dbStart = microtime(true);
             $savedId = $db->save($storeName, $result);
+            $dbElapsed = round(microtime(true) - $dbStart, 4);
+            \App\Logger::log("Veritabanı kayıt işlemi tamamlandı - Süre: {$dbElapsed} saniye (ID: {$savedId})");
         }
+
+        $elapsed = round(microtime(true) - $startTime, 4);
+        \App\Logger::log("MUTABAKAT BAŞARIYLA TAMAMLANDI - Toplam Süre: {$elapsed} saniye");
+        \App\Logger::log("Excel Barkod: " . count($result->terminalBarcodes) . " | PDF Barkod: " . count($result->storeBarcodes));
+        \App\Logger::log("Eşleşen: " . count($result->matched) . " | Eksik: " . count($result->missingInStore) . " | Fazla: " . count($result->extraInStore) . " | Şüpheli: " . count($result->suspectedMatches));
 
         echo json_encode([
             'success' => true,
@@ -121,6 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         ]);
         exit;
     } catch (\Exception $e) {
+        \App\Logger::log("HATA OLUŞTU: " . $e->getMessage() . " | Yer: " . $e->getFile() . ":" . $e->getLine());
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
         exit;
     }
