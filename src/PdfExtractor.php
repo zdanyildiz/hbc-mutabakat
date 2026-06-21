@@ -229,23 +229,27 @@ class PdfExtractor
             $write = null;
             $except = null;
 
-            $numChanged = stream_select($read, $write, $except, 1, 0);
+            // Wait up to 200ms
+            $numChanged = stream_select($read, $write, $except, 0, 200000);
 
             if ($numChanged === false) {
                 break;
             }
 
+            $hasRead = false;
             if ($numChanged > 0) {
                 foreach ($read as $stream) {
                     if ($stream === $pipes[1]) {
-                        $chunk = fread($pipes[1], 4096);
-                        if ($chunk !== false) {
+                        $chunk = fread($pipes[1], 8192);
+                        if ($chunk !== false && $chunk !== '') {
                             $stdoutData .= $chunk;
+                            $hasRead = true;
                         }
                     } elseif ($stream === $pipes[2]) {
-                        $chunk = fread($pipes[2], 4096);
+                        $chunk = fread($pipes[2], 8192);
                         if ($chunk !== false && $chunk !== '') {
                             $stderrData .= $chunk;
+                            $hasRead = true;
                             // Parse live stderr and log to app.log instantly
                             $lines = explode("\n", $chunk);
                             foreach ($lines as $line) {
@@ -266,16 +270,19 @@ class PdfExtractor
 
             $status = proc_get_status($process);
             if (!$status['running']) {
+                // Read remaining outputs one last time
+                while (($chunk = fread($pipes[1], 8192)) !== '' && $chunk !== false) {
+                    $stdoutData .= $chunk;
+                }
+                while (($chunk = fread($pipes[2], 8192)) !== '' && $chunk !== false) {
+                    $stderrData .= $chunk;
+                }
                 break;
             }
-        }
 
-        // Read remaining outputs
-        while (($chunk = fread($pipes[1], 4096)) !== '' && $chunk !== false) {
-            $stdoutData .= $chunk;
-        }
-        while (($chunk = fread($pipes[2], 4096)) !== '' && $chunk !== false) {
-            $stderrData .= $chunk;
+            if ($numChanged === 0 && !$hasRead) {
+                usleep(10000); // 10ms CPU sleep
+            }
         }
 
         fclose($pipes[0]);

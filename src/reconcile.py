@@ -44,7 +44,7 @@ def ocr_page(img_path: str) -> str:
             "tesseract", img_path, "stdout",
             "--psm", "6",
             "-c", "tessedit_char_whitelist=0123456789LIM- "
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", timeout=30)
         return result.stdout
     except Exception as e:
         sys.stderr.write(f"Tesseract error on {img_path}: {str(e)}\n")
