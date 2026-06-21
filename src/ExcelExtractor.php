@@ -21,6 +21,10 @@ class ExcelExtractor
             throw new \InvalidArgumentException("Excel/CSV dosyası bulunamadı: {$filePath}");
         }
 
+        // Tüm hücre değerlerini doğrudan metin (string) olarak bağla. 
+        // Bu sayede 18 haneli büyük sayılar float'a dönüşüp yuvarlanmaz veya scientific notation (1.63E+17) yüzünden yutulmaz.
+        \PhpOffice\PhpSpreadsheet\Cell\Cell::setValueBinder(new \PhpOffice\PhpSpreadsheet\Cell\StringValueBinder());
+
         try {
             $spreadsheet = IOFactory::load($filePath);
             $worksheet = $spreadsheet->getActiveSheet();
@@ -36,14 +40,12 @@ class ExcelExtractor
             }
 
             $cell = $worksheet->getCell('A' . $rowIndex);
-            $barcodeStr = trim($cell->getFormattedValue());
-            if ($barcodeStr === '') {
-                $barcodeVal = $cell->getValue();
-                if (is_scalar($barcodeVal)) {
-                    $barcodeStr = trim((string)$barcodeVal);
-                } elseif ($barcodeVal instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
-                    $barcodeStr = trim($barcodeVal->getPlainText());
-                }
+            $barcodeVal = $cell->getValue();
+            $barcodeStr = '';
+            if (is_scalar($barcodeVal)) {
+                $barcodeStr = trim((string)$barcodeVal);
+            } elseif ($barcodeVal instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
+                $barcodeStr = trim($barcodeVal->getPlainText());
             }
 
             if ($barcodeStr === '') {
@@ -73,6 +75,10 @@ class ExcelExtractor
             throw new \InvalidArgumentException("Excel/CSV dosyası bulunamadı: {$filePath}");
         }
 
+        // Tüm hücre değerlerini doğrudan metin (string) olarak bağla.
+        // Bu sayede 18 haneli büyük sayılar float'a dönüşüp yuvarlanmaz veya scientific notation (1.63E+17) yüzünden yutulmaz.
+        \PhpOffice\PhpSpreadsheet\Cell\Cell::setValueBinder(new \PhpOffice\PhpSpreadsheet\Cell\StringValueBinder());
+
         try {
             $spreadsheet = IOFactory::load($filePath);
             $worksheet = $spreadsheet->getActiveSheet();
@@ -88,22 +94,19 @@ class ExcelExtractor
             }
 
             $barcodeCell = $worksheet->getCell('A' . $rowIndex);
-            // Büyük rakamların bozulmaması için getFormattedValue() öncelikli
-            $barcodeStr = trim($barcodeCell->getFormattedValue());
-            if ($barcodeStr === '') {
-                $barcodeVal = $barcodeCell->getValue();
-                if (is_scalar($barcodeVal)) {
-                    $barcodeStr = trim((string)$barcodeVal);
-                } elseif ($barcodeVal instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
-                    $barcodeStr = trim($barcodeVal->getPlainText());
-                }
+            $barcodeVal = $barcodeCell->getValue();
+            $barcodeStr = '';
+            if (is_scalar($barcodeVal)) {
+                $barcodeStr = trim((string)$barcodeVal);
+            } elseif ($barcodeVal instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
+                $barcodeStr = trim($barcodeVal->getPlainText());
             }
 
             if ($barcodeStr === '') {
                 continue;
             }
 
-            // Sadece sayısal kısımları alalım (böylece .0 vb. temizlenir)
+            // Sadece sayısal kısımları alalım
             $barcodeStrCleaned = preg_replace('/\D/', '', $barcodeStr);
             if ($barcodeStrCleaned === null || strlen($barcodeStrCleaned) < 16 || strlen($barcodeStrCleaned) > 20) {
                 continue;
