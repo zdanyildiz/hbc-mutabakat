@@ -66,12 +66,31 @@ class PdfExtractor
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
 
-        $parser = new Parser();
-        try {
-            $pdf = $parser->parseFile($filePath);
-            $text = $pdf->getText();
-        } catch (\Exception $e) {
-            throw new \RuntimeException("PDF dosyası ayrıştırılamadı: " . $e->getMessage());
+        $text = '';
+        $usedPdftotext = false;
+
+        // 1. Yol: pdftotext CLI aracını dene (C tabanlı olduğu için Smalot'a göre 100 kat daha hızlıdır ve sıfır RAM tüketir)
+        $checkCommand = PHP_OS_FAMILY === 'Windows' ? 'where pdftotext' : 'which pdftotext';
+        $hasPdftotext = shell_exec($checkCommand);
+
+        if ($hasPdftotext !== null && trim($hasPdftotext) !== '') {
+            // -layout parametresi satır yapısını korur, satır tutarsızlığı kontrolleri için gereklidir
+            $output = shell_exec('pdftotext -layout ' . escapeshellarg($filePath) . ' -');
+            if ($output !== null) {
+                $text = $output;
+                $usedPdftotext = true;
+            }
+        }
+
+        // 2. Yol (Fallback): pdftotext yoksa Smalot PdfParser kullan
+        if (!$usedPdftotext) {
+            $parser = new Parser();
+            try {
+                $pdf = $parser->parseFile($filePath);
+                $text = $pdf->getText();
+            } catch (\Exception $e) {
+                throw new \RuntimeException("PDF dosyası ayrıştırılamadı: " . $e->getMessage());
+            }
         }
 
         $barcodes = [];
