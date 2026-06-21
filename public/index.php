@@ -328,9 +328,10 @@ if ($dbEnabled) {
                         </div>
                     </div>
 
-                    <button type="submit" class="btn btn-primary" id="submitBtn">
+                    <button type="submit" class="btn btn-primary" id="submitBtn" style="position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 0.75rem;">
                         <span class="btn-text">Karşılaştırmayı Çalıştır</span>
-                        <div class="loader" style="display:none;"></div>
+                        <span id="liveTimer" style="display: none; font-weight: 600; background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 4px; font-size: 0.85rem;">0.0 sn</span>
+                        <div class="loader" style="display:none; margin: 0;"></div>
                     </button>
                 </form>
             </section>
@@ -394,7 +395,8 @@ if ($dbEnabled) {
                     <table class="report-table" id="reportTable">
                         <thead>
                             <tr>
-                                <th>Barkod / Takip Numarası</th>
+                                <th>El Terminali (Excel) Barkodu</th>
+                                <th>PDF Barkodu</th>
                                 <th>Mağaza Adı</th>
                                 <th>Durum</th>
                                 <th>Açıklama</th>

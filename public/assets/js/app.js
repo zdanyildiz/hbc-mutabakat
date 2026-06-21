@@ -129,6 +129,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let activeFilter = 'all';
 
+    const liveTimer = document.getElementById('liveTimer');
+    let timerInterval = null;
+    let secondsElapsed = 0;
+
     form.addEventListener('submit', (e) => {
         e.preventDefault();
 
@@ -136,6 +140,22 @@ document.addEventListener('DOMContentLoaded', () => {
         submitBtn.disabled = true;
         btnText.style.display = 'none';
         loader.style.display = 'block';
+
+        // Reset and start live timer
+        secondsElapsed = 0;
+        if (liveTimer) {
+            liveTimer.textContent = '0.0 sn';
+            liveTimer.style.display = 'inline-block';
+        }
+        if (timerInterval) {
+            clearInterval(timerInterval);
+        }
+        timerInterval = setInterval(() => {
+            secondsElapsed += 0.1;
+            if (liveTimer) {
+                liveTimer.textContent = `${secondsElapsed.toFixed(1)} sn`;
+            }
+        }, 100);
 
         const formData = new FormData(form);
 
@@ -163,9 +183,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 renderResults();
                 resultsSection.scrollIntoView({ behavior: 'smooth' });
-                
-                // Rapor başarıyla tamamlandığı için formu temizleyip dosyaları kaldırabiliriz
-                // Ancak verileri ekranda gösterdiğimiz için kullanıcı görebilir.
             } else {
                 alert('Hata: ' + data.message);
             }
@@ -175,10 +192,18 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('İşlem sırasında beklenmedik bir hata oluştu.');
         })
         .finally(() => {
+            // Stop live timer
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
             // Hide loading state
             submitBtn.disabled = false;
             btnText.style.display = 'block';
             loader.style.display = 'none';
+            if (liveTimer) {
+                liveTimer.style.display = 'none';
+            }
         });
     });
 
@@ -238,10 +263,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
                     const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
                     rowsHtml += `<tr class="row-missing" data-type="missing">
-                        <td class="font-semibold">
-                            ${escapeHtml(barcode)}
-                            ${getOcrAlert(barcode)}
-                        </td>
+                        <td class="font-semibold">${escapeHtml(barcode)}</td>
+                        <td class="text-muted">-</td>
                         <td class="text-secondary">${escapeHtml(storeName)}</td>
                         <td><span class="badge badge-missing">Eksik</span></td>
                         <td class="text-muted">Terminalde okutulmuş ancak Mağaza PDF'inde bulunamadı.</td>
@@ -257,6 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
                     const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
                     rowsHtml += `<tr class="row-extra" data-type="extra">
+                        <td class="text-muted">-</td>
                         <td class="font-semibold">
                             ${escapeHtml(barcode)}
                             ${getOcrAlert(barcode)}
@@ -279,10 +303,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (searchVal === '' || barcode.toLowerCase().includes(searchVal) || storeBarcode.toLowerCase().includes(searchVal)) {
                     const storeName = currentData.barcodeStores[barcode] || currentData.barcodeStores[storeBarcode] || 'Bilinmeyen Mağaza';
                     rowsHtml += `<tr class="row-suspected" data-type="suspected" id="suspected-row-${idx}">
+                        <td class="font-semibold">${escapeHtml(barcode)}</td>
                         <td class="font-semibold">
-                            ${escapeHtml(barcode)}
+                            ${escapeHtml(storeBarcode)}
                             <div class="suspected-detail">
-                                PDF Barkodu: <code>${escapeHtml(storeBarcode)}</code>
                                 <span class="levenshtein-badge">🔍 ${distance} karakter fark</span>
                             </div>
                         </td>
@@ -308,6 +332,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
                     const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
                     rowsHtml += `<tr class="row-matched" data-type="matched">
+                        <td class="font-semibold">${escapeHtml(barcode)}</td>
                         <td class="font-semibold">
                             ${escapeHtml(barcode)}
                             ${getOcrAlert(barcode)}
