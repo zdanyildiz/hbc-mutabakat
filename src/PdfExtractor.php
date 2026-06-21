@@ -252,7 +252,7 @@ class PdfExtractor
         $images = [];
         try {
             $imagick = new \Imagick();
-            $imagick->setResolution(300, 300);
+            $imagick->setResolution(200, 200);
             $imagick->readImage($filePath);
 
             $tempDir = dirname(__DIR__) . '/var/tmp';
@@ -300,7 +300,7 @@ class PdfExtractor
             try {
                 $ocr = new TesseractOCR($pagePath);
                 // @phpstan-ignore-next-line
-                $ocr->lang('tur', 'eng');
+                $ocr->lang('eng');
                 // @phpstan-ignore-next-line
                 $ocr->psm(6);
                 // @phpstan-ignore-next-line

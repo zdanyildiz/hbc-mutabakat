@@ -28,6 +28,7 @@ $action = $_GET['action'] ?? '';
 // Handle Reconcile Request via AJAX
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
     header('Content-Type: application/json; charset=utf-8');
+    @set_time_limit(300);
     
     try {
         if (!isset($_FILES['excel_file']) || !isset($_FILES['pdf_file'])) {
