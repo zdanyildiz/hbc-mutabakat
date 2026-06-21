@@ -215,6 +215,7 @@ def main():
     parser = argparse.ArgumentParser(description="HBC Mutabakat PDF Barcode Extractor Engine")
     parser.add_argument("--pdf", required=True, help="Path to the PDF file")
     parser.add_argument("--mode", choices=["text", "ocr"], default="text", help="Extraction mode")
+    parser.add_argument("--raw", action="store_true", help="Return raw text only without processing")
 
     args = parser.parse_args()
 
@@ -228,6 +229,15 @@ def main():
             text = extract_ocr_mode(args.pdf)
         else:
             text = extract_text_mode(args.pdf)
+
+        if args.raw:
+            import json
+            print(json.dumps({
+                "success": True,
+                "raw_text": text,
+                "elapsed_time": round(time.time() - start_time, 4)
+            }, ensure_ascii=False))
+            sys.exit(0)
 
         barcodes, barcode_to_original = process_text_to_barcodes(text)
         elapsed = time.time() - start_time

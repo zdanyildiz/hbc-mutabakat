@@ -534,4 +534,129 @@ class PdfExtractor
 
         return array_values(array_unique($barcodes));
     }
+
+    /**
+     * Extracts raw text from PDF using the specified mode.
+     *
+     * @param string $filePath
+     * @param string $mode
+     * @return string
+     * @throws \InvalidArgumentException|\RuntimeException
+     */
+    public function extractRawText(string $filePath, string $mode): string
+    {
+        if (!file_exists($filePath)) {
+            throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
+        }
+
+        // Try Python extraction first with --raw flag
+        $pythonScript = dirname(__DIR__) . '/src/reconcile.py';
+        if (file_exists($pythonScript)) {
+            $pythonExecutable = 'python3';
+            $checkCommand = PHP_OS_FAMILY === 'Windows' ? 'where python3' : 'which python3';
+            $hasPython3 = (string)shell_exec($checkCommand);
+            if (trim($hasPython3) === '') {
+                $pythonExecutable = 'python';
+            }
+
+            $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --raw --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
+            
+            $descriptorspec = [
+                0 => ["pipe", "r"], // stdin
+                1 => ["pipe", "w"], // stdout
+                2 => ["pipe", "w"]  // stderr
+            ];
+
+            $process = proc_open($cmd, $descriptorspec, $pipes);
+            if (is_resource($process)) {
+                stream_set_blocking($pipes[1], false);
+                stream_set_blocking($pipes[2], false);
+
+                $stdoutData = '';
+                $stderrData = '';
+
+                while (true) {
+                    $read = [$pipes[1], $pipes[2]];
+                    $write = null;
+                    $except = null;
+                    $numChanged = stream_select($read, $write, $except, 0, 200000);
+
+                    if ($numChanged === false) {
+                        break;
+                    }
+
+                    $hasRead = false;
+                    if ($numChanged > 0) {
+                        foreach ($read as $stream) {
+                            if ($stream === $pipes[1]) {
+                                $chunk = fread($pipes[1], 8192);
+                                if ($chunk !== false && $chunk !== '') {
+                                    $stdoutData .= $chunk;
+                                    $hasRead = true;
+                                }
+                            } elseif ($stream === $pipes[2]) {
+                                $chunk = fread($pipes[2], 8192);
+                                if ($chunk !== false && $chunk !== '') {
+                                    $stderrData .= $chunk;
+                                    $hasRead = true;
+                                    
+                                    $lines = explode("\n", $chunk);
+                                    foreach ($lines as $line) {
+                                        $line = trim($line);
+                                        if ($line !== '') {
+                                            if (str_contains($line, 'OCR_PROGRESS:')) {
+                                                $cleanLog = str_replace('OCR_PROGRESS:', '', $line);
+                                                \App\Logger::log("[PdfExtractor-Python-Live-Raw]" . $cleanLog);
+                                            } else {
+                                                \App\Logger::log("[PdfExtractor-Python-Stderr-Raw] " . $line);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    $status = proc_get_status($process);
+                    if (!$status['running']) {
+                        while (($chunk = fread($pipes[1], 8192)) !== '' && $chunk !== false) {
+                            $stdoutData .= $chunk;
+                        }
+                        while (($chunk = fread($pipes[2], 8192)) !== '' && $chunk !== false) {
+                            $stderrData .= $chunk;
+                        }
+                        break;
+                    }
+
+                    if ($numChanged === 0 && !$hasRead) {
+                        usleep(10000);
+                    }
+                }
+
+                fclose($pipes[0]);
+                fclose($pipes[1]);
+                fclose($pipes[2]);
+                proc_close($process);
+
+                $data = json_decode(trim($stdoutData), true);
+                if (is_array($data) && isset($data['success']) && $data['success'] === true) {
+                    return $data['raw_text'] ?? '';
+                }
+            }
+        }
+
+        // Native PHP fallback if Python script is not found or fails
+        if ($mode === 'ocr') {
+            throw new \RuntimeException("Native PHP OCR ham çıktısı desteklenmiyor. Python motoru yüklü olmalıdır.");
+        }
+
+        // Native PDF text parsing fallback (Smalot)
+        $parser = new \Smalot\PdfParser\Parser();
+        try {
+            $pdf = $parser->parseFile($filePath);
+            return $pdf->getText();
+        } catch (\Exception $e) {
+            throw new \RuntimeException("PDF dosyası ayrıştırılamadı (Smalot): " . $e->getMessage());
+        }
+    }
 }
