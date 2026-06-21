@@ -62,6 +62,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
                     echo json_encode(['success' => false, 'message' => 'PDF dosyalarından biri yüklenirken hata oluştu.']);
                     exit;
                 }
+                $origName = $pdfFile['name'][$key];
+                $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+                if (str_starts_with($origName, 'desktop') || $ext !== 'pdf') {
+                    \App\Logger::log("[Upload] PDF olmayan dosya es geçildi: " . $origName);
+                    continue;
+                }
                 $pdfPaths[] = $pdfFile['tmp_name'][$key];
             }
         } else {
@@ -69,7 +75,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
                 echo json_encode(['success' => false, 'message' => 'PDF dosyası yüklenirken hata oluştu.']);
                 exit;
             }
-            $pdfPaths[] = $pdfFile['tmp_name'];
+            $origName = $pdfFile['name'];
+            $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+            if (str_starts_with($origName, 'desktop') || $ext !== 'pdf') {
+                \App\Logger::log("[Upload] PDF olmayan dosya es geçildi: " . $origName);
+            } else {
+                $pdfPaths[] = $pdfFile['tmp_name'];
+            }
+        }
+
+        if (empty($pdfPaths)) {
+            echo json_encode(['success' => false, 'message' => 'Lütfen geçerli en az bir PDF dosyası yükleyin.']);
+            exit;
         }
 
         $excelPath = $excelFile['tmp_name'];
