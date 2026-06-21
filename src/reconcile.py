@@ -119,11 +119,8 @@ def process_text_to_lines(text: str) -> list:
         if not line_strip:
             continue
             
-        # İlk 30 karakteri al
-        first_30 = line_strip[:30]
-        
-        # Boşlukları temizle
-        clean_line = re.sub(r'\s+', '', first_30)
+        # Boşlukları temizle (tüm satırda)
+        clean_line = re.sub(r'\s+', '', line_strip)
         
         # 18 karakterden küçükse es geç
         if len(clean_line) < 18:

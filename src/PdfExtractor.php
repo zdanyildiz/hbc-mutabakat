@@ -408,8 +408,8 @@ class PdfExtractor
     }
 
     /**
-     * Helper to process text: takes the first 30 characters of each line,
-     * strips all whitespaces, and skips lines shorter than 18 characters.
+     * Helper to process text: strips all whitespaces from each line,
+     * and skips lines shorter than 18 characters.
      *
      * @param string $text
      * @return array<string>
@@ -425,11 +425,8 @@ class PdfExtractor
                 continue;
             }
 
-            // İlk 30 karakteri al
-            $first30 = mb_substr($lineStrip, 0, 30);
-
-            // Boşlukları temizle
-            $cleanLine = (string)preg_replace('/\s+/u', '', $first30);
+            // Boşlukları temizle (tüm satırda)
+            $cleanLine = (string)preg_replace('/\s+/u', '', $lineStrip);
 
             // 18 karakterden küçükse es geç
             if (mb_strlen($cleanLine) < 18) {
