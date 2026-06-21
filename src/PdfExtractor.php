@@ -17,14 +17,9 @@ class PdfExtractor
      */
     private array $mismatches = [];
 
-    private bool $useOcr = false;
+    private bool $useOcr = true;
 
-    // Character mapping table to fix OCR and font encoding issues
-    private const OCR_MAP = [
-        'l' => '1', 'ı' => '1', 'I' => '1', 'i' => '1', '!' => '1', '[' => '1', ']' => '3',
-        'B' => '8', 'M' => '0', 'O' => '0', 'o' => '0', 'E' => '8', 'S' => '5', 's' => '5', 'ü' => '4',
-        't' => '1', '|' => '1', '}' => '1', '{' => '8', 'j' => '3', 'J' => '3'
-    ];
+
 
     public function setUseOcr(bool $useOcr): void
     {
@@ -292,13 +287,13 @@ class PdfExtractor
 
         $data = json_decode(trim($stdoutData), true);
         if (is_array($data) && isset($data['success']) && $data['success'] === true) {
-            $this->barcodeToOriginalMap = $data['barcode_to_original'] ?? [];
-            $this->mismatches = $data['mismatches'] ?? [];
+            $this->barcodeToOriginalMap = [];
+            $this->mismatches = [];
             
             $timeLog = isset($data['elapsed_time']) ? "Süre: {$data['elapsed_time']} sn" : "";
             \App\Logger::log("[PdfExtractor-Python] Başarıyla tamamlandı - Mod: {$mode} | {$timeLog}");
             
-            return $data['barcodes'] ?? [];
+            return $data['lines'] ?? [];
         }
 
         \App\Logger::log("[PdfExtractor-Python] Hata veya uyumsuz çıktı: " . trim(substr($stdoutData, 0, 200)));
@@ -413,126 +408,38 @@ class PdfExtractor
     }
 
     /**
-     * Helper to process text, apply character mapping and extract barcodes.
+     * Helper to process text: takes the first 30 characters of each line,
+     * strips all whitespaces, and skips lines shorter than 18 characters.
      *
      * @param string $text
      * @return array<string>
      */
     private function processText(string $text): array
     {
-        $barcodes = [];
-        $this->mismatches = []; // Disabled mismatches completely as per user request
+        $rawLines = explode("\n", str_replace("\r", "", str_replace("\f", "\n", $text)));
+        $processedLines = [];
 
-        // Process line by line on original text
-        $lines = explode("\n", $text);
-        $preprocessedLines = [];
-
-        // 1. Preprocess split lines (joining wrapping lines)
-        for ($i = 0; $i < count($lines); $i++) {
-            $line = trim($lines[$i]);
-            if ($line === '') {
+        foreach ($rawLines as $line) {
+            $lineStrip = trim($line);
+            if ($lineStrip === '') {
                 continue;
             }
 
-            $convLine = strtr($line, self::OCR_MAP);
-            $digitsInLine = (string)preg_replace('/\D/', '', $convLine);
-            $digitCount = strlen($digitsInLine);
+            // İlk 30 karakteri al
+            $first30 = mb_substr($lineStrip, 0, 30);
 
-            if ($digitCount >= 11 && $digitCount <= 15) {
-                if (isset($lines[$i + 1])) {
-                    $nextLine = trim($lines[$i + 1]);
-                    $convNext = strtr($nextLine, self::OCR_MAP);
-                    $nextDigits = (string)preg_replace('/\D/', '', $convNext);
-                    if ($nextDigits !== '' && strlen($nextLine) <= 5) {
-                        $line .= " " . $nextLine;
-                        $i++;
-                    }
-                }
-            }
-            $preprocessedLines[] = $line;
-        }
+            // Boşlukları temizle
+            $cleanLine = (string)preg_replace('/\s+/u', '', $first30);
 
-        // 2. Extract barcodes line by line
-        foreach ($preprocessedLines as $line) {
-            $columns = preg_split('/(?:\s{2,}|\t)/u', $line);
-            if ($columns === false) {
-                $columns = [$line];
-            }
-
-            /** @var array<array{original: string, word: string, converted: string, letters_count: int}> $candidates */
-            $candidates = [];
-
-            foreach ($columns as $col) {
-                $colClean = trim($col);
-                if ($colClean === '') {
-                    continue;
-                }
-
-                // Remove internal spaces or hyphens in a single column (OCR splitting fix)
-                $word = (string)preg_replace('/[\s-]+/u', '', $colClean);
-
-                // Apply OCR MAP to see if it becomes a valid barcode
-                $conv = strtr($word, self::OCR_MAP);
-                $clean = (string)preg_replace('/\D/', '', $conv);
-
-                // Smart sequence number trimming:
-                $length = strlen($clean);
-                if ($length > 18) {
-                    foreach ([18, 17, 16] as $targetLen) {
-                        $suffix = substr($clean, -$targetLen);
-                        if (preg_match('/^(?:1|6|7)/', $suffix)) {
-                            $clean = $suffix;
-                            break;
-                        }
-                    }
-                }
-
-                $finalLen = strlen($clean);
-                if ($finalLen >= 16 && $finalLen <= 20) {
-                    // Count letters in original word to check for pure digits
-                    preg_match_all('/[a-zA-Z]/u', $word, $letterMatches);
-                    $lettersCount = count($letterMatches[0]);
-                    
-                    $candidates[] = [
-                        'original' => $colClean,
-                        'word' => $word,
-                        'converted' => $clean,
-                        'letters_count' => $lettersCount
-                    ];
-                }
-            }
-
-            if (empty($candidates)) {
+            // 18 karakterden küçükse es geç
+            if (mb_strlen($cleanLine) < 18) {
                 continue;
             }
 
-            // Group similar candidates (Levenshtein distance <= 2)
-            /** @var array<array{original: string, word: string, converted: string, letters_count: int}> $resolved */
-            $resolved = [];
-            foreach ($candidates as $cand) {
-                $isMerged = false;
-                foreach ($resolved as $key => $res) {
-                    if (levenshtein($cand['converted'], $res['converted']) <= 2) {
-                        // Compare and keep the one with fewer letters (more digits)
-                        if ($cand['letters_count'] < $res['letters_count']) {
-                            $resolved[$key] = $cand;
-                        }
-                        $isMerged = true;
-                        break;
-                    }
-                }
-                if (!$isMerged) {
-                    $resolved[] = $cand;
-                }
-            }
-
-            foreach ($resolved as $res) {
-                $barcodes[] = $res['converted'];
-                $this->barcodeToOriginalMap[$res['converted']] = $res['original'];
-            }
+            $processedLines[] = $cleanLine;
         }
 
-        return array_values(array_unique($barcodes));
+        return $processedLines;
     }
 
     /**

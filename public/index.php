@@ -290,7 +290,7 @@ if ($dbEnabled) {
                     </div>
 
                     <div class="form-group checkbox-group" style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; margin-bottom: 1.5rem;">
-                        <input type="checkbox" id="use_ocr" name="use_ocr" value="1" style="width: auto; height: auto; cursor: pointer;">
+                        <input type="checkbox" id="use_ocr" name="use_ocr" value="1" style="width: auto; height: auto; cursor: pointer;" checked>
                         <label for="use_ocr" style="margin: 0; cursor: pointer; font-size: 0.9rem; color: var(--text-secondary);">
                             Görsel OCR Modu (Hatalı PDF fontlarını düzeltir, daha yavaştır)
                         </label>

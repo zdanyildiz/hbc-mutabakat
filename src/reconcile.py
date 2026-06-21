@@ -110,111 +110,33 @@ def extract_ocr_mode(pdf_path: str) -> str:
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-def process_line_for_barcodes(line: str, barcode_to_original: dict):
-    # Split line by 2+ spaces or tabs to isolate table columns
-    columns = re.split(r'(?:\s{2,}|\t)', line)
-    candidates = []
-
-    for col in columns:
-        col_clean = col.strip()
-        if not col_clean:
+def process_text_to_lines(text: str) -> list:
+    raw_lines = text.replace("\f", "\n").split("\n")
+    processed_lines = []
+    
+    for line in raw_lines:
+        line_strip = line.strip()
+        if not line_strip:
             continue
+            
+        # İlk 30 karakteri al
+        first_30 = line_strip[:30]
         
-        # Remove internal spaces or hyphens in a single column (OCR splitting fix)
-        word = re.sub(r'[\s-]+', '', col_clean)
+        # Boşlukları temizle
+        clean_line = re.sub(r'\s+', '', first_30)
         
-        # Apply OCR MAP to see if it becomes a valid barcode
-        conv = apply_ocr_map(word)
-        clean = re.sub(r'\D', '', conv)
-        
-        # Smart sequence number trimming:
-        length = len(clean)
-        if length > 18:
-            for target_len in [18, 17, 16]:
-                if length >= target_len:
-                    suffix = clean[-target_len:]
-                    if re.match(r'^(?:1|6|7)', suffix):
-                        clean = suffix
-                        break
-        
-        final_len = len(clean)
-        if 16 <= final_len <= 20:
-            # Count letters in original word to check for pure digits
-            letters_count = sum(1 for c in word if c.isalpha())
-            candidates.append({
-                'original': col_clean,
-                'word': word,
-                'converted': clean,
-                'letters_count': letters_count,
-                'is_pure_digits': word.isdigit()
-            })
-
-    if not candidates:
-        return []
-
-    # Group similar candidates (Levenshtein distance <= 2)
-    resolved = []
-    for cand in candidates:
-        is_merged = False
-        for i, res in enumerate(resolved):
-            if levenshtein(cand['converted'], res['converted']) <= 2:
-                # Compare and keep the one with fewer letters (more digits)
-                if cand['letters_count'] < res['letters_count']:
-                    resolved[i] = cand
-                is_merged = True
-                break
-        if not is_merged:
-            resolved.append(cand)
-
-    line_barcodes = []
-    for res in resolved:
-        line_barcodes.append(res['converted'])
-        barcode_to_original[res['converted']] = res['original']
-
-    return line_barcodes
-
-def process_text_to_barcodes(text: str):
-    # Process line by line on original text
-    lines = [line.strip() for line in text.split("\n")]
-    preprocessed_lines = []
-
-    # 1. Preprocess split lines (joining wrapping lines)
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if not line:
-            i += 1
+        # 18 karakterden küçükse es geç
+        if len(clean_line) < 18:
             continue
-
-        conv_line = apply_ocr_map(line)
-        digits_in_line = re.sub(r'\D', '', conv_line)
-        if 11 <= len(digits_in_line) <= 15:
-            if i + 1 < len(lines):
-                next_line = lines[i + 1]
-                conv_next = apply_ocr_map(next_line)
-                next_digits = re.sub(r'\D', '', conv_next)
-                if next_digits and len(next_line) <= 5:
-                    line = line + " " + next_line
-                    i += 1
+            
+        processed_lines.append(clean_line)
         
-        preprocessed_lines.append(line)
-        i += 1
-
-    barcodes = []
-    barcode_to_original = {}
-
-    # 2. Extract barcodes line by line
-    for line in preprocessed_lines:
-        line_barcodes = process_line_for_barcodes(line, barcode_to_original)
-        barcodes.extend(line_barcodes)
-
-    unique_barcodes = list(set(barcodes))
-    return unique_barcodes, barcode_to_original
+    return processed_lines
 
 def main():
     parser = argparse.ArgumentParser(description="HBC Mutabakat PDF Barcode Extractor Engine")
     parser.add_argument("--pdf", required=True, help="Path to the PDF file")
-    parser.add_argument("--mode", choices=["text", "ocr"], default="text", help="Extraction mode")
+    parser.add_argument("--mode", choices=["text", "ocr"], default="ocr", help="Extraction mode")
     parser.add_argument("--raw", action="store_true", help="Return raw text only without processing")
 
     args = parser.parse_args()
@@ -239,15 +161,13 @@ def main():
             }, ensure_ascii=False))
             sys.exit(0)
 
-        barcodes, barcode_to_original = process_text_to_barcodes(text)
+        pdf_lines = process_text_to_lines(text)
         elapsed = time.time() - start_time
 
         import json
         print(json.dumps({
             "success": True,
-            "barcodes": barcodes,
-            "barcode_to_original": barcode_to_original,
-            "mismatches": [], # Disabled mismatches completely as per user request
+            "lines": pdf_lines,
             "elapsed_time": round(elapsed, 4)
         }, ensure_ascii=False))
 

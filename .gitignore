@@ -5,3 +5,6 @@
 .vscode/
 /composer.lock
 .~lock*
+/scratch/
+__pycache__/
+*.pyc
