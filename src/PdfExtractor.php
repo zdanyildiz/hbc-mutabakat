@@ -340,7 +340,7 @@ class PdfExtractor
                 flush();
 
                 $pageImagick = new \Imagick();
-                $pageImagick->setResolution(150, 150); // Optimized resolution
+                $pageImagick->setResolution(200, 200); // Optimized resolution
                 $pageImagick->readImage($filePath . '[' . $i . ']');
 
                 $pageImagick->transformImageColorspace(\Imagick::COLORSPACE_GRAY);

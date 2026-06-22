@@ -69,7 +69,7 @@ def extract_ocr_mode(pdf_path: str) -> str:
     temp_dir = tempfile.mkdtemp()
     try:
         subprocess.run([
-            "pdftoppm", "-png", "-r", "150",
+            "pdftoppm", "-png", "-r", "200",
             pdf_path, os.path.join(temp_dir, "page")
         ], check=True)
 
