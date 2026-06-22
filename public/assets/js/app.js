@@ -244,7 +244,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function buildTable() {
         tableBody.innerHTML = '';
         const searchVal = tableSearch.value.toLowerCase().trim();
-        let rowsHtml = '';
         let matchFound = false;
 
         const getOcrAlert = (barcode) => {
@@ -257,94 +256,141 @@ document.addEventListener('DOMContentLoaded', () => {
             return '';
         };
 
+        const cleanStoreName = (name) => {
+            if (!name || name === 'Bilinmeyen Mağaza' || name.trim() === '') {
+                return 'Eşleşme Sonucu';
+            }
+            const commaCount = (name.match(/,/g) || []).length;
+            const quoteCount = (name.match(/["']/g) || []).length;
+            const dotDotDot = name.includes('...');
+            if (commaCount >= 2 || quoteCount >= 1 || dotDotDot || name.includes('rağaza') || name.includes('Mağa.a') || name.includes('Mağaza,')) {
+                return 'Eşleşme Sonucu';
+            }
+            return name;
+        };
+
+        let allRows = [];
+
         // Missing Items (Kırmızı)
-        if (activeFilter === 'all' || activeFilter === 'missing') {
-            currentData.missingInStore.forEach(barcode => {
-                if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
-                    const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
-                    rowsHtml += `<tr class="row-missing" data-type="missing">
-                        <td class="font-semibold">${escapeHtml(barcode)}</td>
-                        <td class="text-muted">-</td>
-                        <td class="text-secondary">${escapeHtml(storeName)}</td>
-                        <td><span class="badge badge-missing">Eksik</span></td>
-                        <td class="text-muted">Terminalde okutulmuş ancak Mağaza PDF'inde bulunamadı.</td>
-                    </tr>`;
-                    matchFound = true;
-                }
+        currentData.missingInStore.forEach(barcode => {
+            const rawStoreName = currentData.barcodeStores[barcode];
+            const storeName = cleanStoreName(rawStoreName);
+            allRows.push({
+                type: 'missing',
+                barcode: barcode,
+                storeBarcode: '-',
+                storeName: storeName,
+                html: `<tr class="row-missing" data-type="missing">
+                    <td class="font-semibold">${escapeHtml(barcode)}</td>
+                    <td class="text-muted">-</td>
+                    <td class="text-secondary">${escapeHtml(storeName)}</td>
+                    <td><span class="badge badge-missing">Eksik</span></td>
+                    <td class="text-muted">Terminalde okutulmuş ancak Mağaza PDF'inde bulunamadı.</td>
+                </tr>`
             });
-        }
+        });
 
         // Extra Items (Sarı/Turuncu)
-        if (activeFilter === 'all' || activeFilter === 'extra') {
-            currentData.extraInStore.forEach(barcode => {
-                if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
-                    const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
-                    rowsHtml += `<tr class="row-extra" data-type="extra">
-                        <td class="text-muted">-</td>
-                        <td class="font-semibold">
-                            ${escapeHtml(barcode)}
-                            ${getOcrAlert(barcode)}
-                        </td>
-                        <td class="text-secondary">${escapeHtml(storeName)}</td>
-                        <td><span class="badge badge-extra">Fazla</span></td>
-                        <td class="text-muted">Mağaza PDF'inde mevcut ancak Terminalde okutulmamış.</td>
-                    </tr>`;
-                    matchFound = true;
-                }
+        currentData.extraInStore.forEach(barcode => {
+            const rawStoreName = currentData.barcodeStores[barcode];
+            const storeName = cleanStoreName(rawStoreName);
+            allRows.push({
+                type: 'extra',
+                barcode: '-',
+                storeBarcode: barcode,
+                storeName: storeName,
+                html: `<tr class="row-extra" data-type="extra">
+                    <td class="text-muted">-</td>
+                    <td class="font-semibold">
+                        ${escapeHtml(barcode)}
+                        ${getOcrAlert(barcode)}
+                    </td>
+                    <td class="text-secondary">${escapeHtml(storeName)}</td>
+                    <td><span class="badge badge-extra">Fazla</span></td>
+                    <td class="text-muted">Mağaza PDF'inde mevcut ancak Terminalde okutulmamış.</td>
+                </tr>`
             });
-        }
+        });
 
         // Suspected Items (Sarı/Amber)
-        if (activeFilter === 'all' || activeFilter === 'suspected') {
-            currentData.suspectedMatches.forEach((suspect, idx) => {
-                const barcode = suspect.terminal_barcode;
-                const storeBarcode = suspect.store_barcode;
-                const distance = suspect.distance;
-                if (searchVal === '' || barcode.toLowerCase().includes(searchVal) || storeBarcode.toLowerCase().includes(searchVal)) {
-                    const storeName = currentData.barcodeStores[barcode] || currentData.barcodeStores[storeBarcode] || 'Bilinmeyen Mağaza';
-                    rowsHtml += `<tr class="row-suspected" data-type="suspected" id="suspected-row-${idx}">
-                        <td class="font-semibold">${escapeHtml(barcode)}</td>
-                        <td class="font-semibold">
-                            ${escapeHtml(storeBarcode)}
-                            <div class="suspected-detail">
-                                <span class="levenshtein-badge">🔍 ${distance} karakter fark</span>
-                            </div>
-                        </td>
-                        <td class="text-secondary">${escapeHtml(storeName)}</td>
-                        <td><span class="badge badge-suspected">Şüpheli</span></td>
-                        <td>
-                            <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-                                <span class="text-muted" style="font-size:0.85rem;">Yakın eşleşme bulundu</span>
-                                <button type="button" class="btn-approve" onclick="approveSuspected(${idx}, this)">
-                                    ✅ Manuel Onayla
-                                </button>
-                            </div>
-                        </td>
-                    </tr>`;
-                    matchFound = true;
-                }
+        currentData.suspectedMatches.forEach((suspect, idx) => {
+            const barcode = suspect.terminal_barcode;
+            const storeBarcode = suspect.store_barcode;
+            const distance = suspect.distance;
+            const rawStoreName = currentData.barcodeStores[barcode] || currentData.barcodeStores[storeBarcode];
+            const storeName = cleanStoreName(rawStoreName);
+            allRows.push({
+                type: 'suspected',
+                barcode: barcode,
+                storeBarcode: storeBarcode,
+                storeName: storeName,
+                html: `<tr class="row-suspected" data-type="suspected" id="suspected-row-${idx}">
+                    <td class="font-semibold">${escapeHtml(barcode)}</td>
+                    <td class="font-semibold">
+                        ${escapeHtml(storeBarcode)}
+                        <div class="suspected-detail">
+                            <span class="levenshtein-badge">🔍 ${distance} karakter fark</span>
+                        </div>
+                    </td>
+                    <td class="text-secondary">${escapeHtml(storeName)}</td>
+                    <td><span class="badge badge-suspected">Şüpheli</span></td>
+                    <td>
+                        <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                            <span class="text-muted" style="font-size:0.85rem;">Yakın eşleşme bulundu</span>
+                            <button type="button" class="btn-approve" onclick="approveSuspected(${idx}, this)">
+                                ✅ Manuel Onayla
+                            </button>
+                        </div>
+                    </td>
+                </tr>`
             });
-        }
+        });
 
         // Matched Items (Yeşil)
-        if (activeFilter === 'all' || activeFilter === 'matched') {
-            currentData.matched.forEach(barcode => {
-                if (searchVal === '' || barcode.toLowerCase().includes(searchVal)) {
-                    const storeName = currentData.barcodeStores[barcode] || 'Bilinmeyen Mağaza';
-                    rowsHtml += `<tr class="row-matched" data-type="matched">
-                        <td class="font-semibold">${escapeHtml(barcode)}</td>
-                        <td class="font-semibold">
-                            ${escapeHtml(barcode)}
-                            ${getOcrAlert(barcode)}
-                        </td>
-                        <td class="text-secondary">${escapeHtml(storeName)}</td>
-                        <td><span class="badge badge-matched">Eşleşti</span></td>
-                        <td class="text-muted">Her iki listede de başarıyla eşleşti.</td>
-                    </tr>`;
-                    matchFound = true;
-                }
+        currentData.matched.forEach(barcode => {
+            const rawStoreName = currentData.barcodeStores[barcode];
+            const storeName = cleanStoreName(rawStoreName);
+            allRows.push({
+                type: 'matched',
+                barcode: barcode,
+                storeBarcode: barcode,
+                storeName: storeName,
+                html: `<tr class="row-matched" data-type="matched">
+                    <td class="font-semibold">${escapeHtml(barcode)}</td>
+                    <td class="font-semibold">
+                        ${escapeHtml(barcode)}
+                        ${getOcrAlert(barcode)}
+                    </td>
+                    <td class="text-secondary">${escapeHtml(storeName)}</td>
+                    <td><span class="badge badge-matched">Eşleşti</span></td>
+                    <td class="text-muted">Her iki listede de başarıyla eşleşti.</td>
+                </tr>`
             });
-        }
+        });
+
+        // Mağaza adına göre alfabetik (A-Z) sırala
+        allRows.sort((a, b) => {
+            return a.storeName.localeCompare(b.storeName, 'tr', { sensitivity: 'base' });
+        });
+
+        let rowsHtml = '';
+        allRows.forEach(row => {
+            if (activeFilter !== 'all' && row.type !== activeFilter) {
+                return;
+            }
+
+            const barcodeVal = row.barcode.toLowerCase();
+            const storeBarcodeVal = row.storeBarcode.toLowerCase();
+            const storeNameVal = row.storeName.toLowerCase();
+            
+            const barcodeMatch = barcodeVal.includes(searchVal) || storeBarcodeVal.includes(searchVal);
+            const storeNameMatch = storeNameVal.includes(searchVal);
+
+            if (searchVal === '' || barcodeMatch || storeNameMatch) {
+                rowsHtml += row.html;
+                matchFound = true;
+            }
+        });
 
         tableBody.innerHTML = rowsHtml;
         noDataMsg.style.display = matchFound ? 'none' : 'block';

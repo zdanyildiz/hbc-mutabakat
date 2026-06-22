@@ -101,12 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
 
         $storeName = trim((string)($_POST['store_name'] ?? ''));
         if ($storeName === '') {
-            $storeNames = [];
-            foreach ($pdfPaths as $path) {
-                $storeNames[] = $pdfExtractor->extractStoreName($path);
-            }
-            $storeNames = array_unique($storeNames);
-            $storeName = implode(', ', $storeNames);
+            $storeName = 'Eşleşme Sonucu';
         }
 
         $result = $reconciler->reconcile($excelPath, $pdfPaths);
