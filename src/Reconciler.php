@@ -125,6 +125,40 @@ class Reconciler
 
         $extraInStore = array_values($pdfLinesPool);
         $suspectedMatches = [];
+        $stillMissingAfterFuzzy = [];
+
+        foreach ($missingInStore as $missingBarcode) {
+            $fuzzyFound = false;
+            foreach ($extraInStore as $idx => $extraBarcode) {
+                // PDF'teki fazla satırı sadece sayılar kalacak şekilde temizle
+                $cleanExtra = preg_replace('/\D/', '', $extraBarcode);
+                if ($cleanExtra === null || $cleanExtra === '') {
+                    $cleanExtra = $extraBarcode;
+                }
+                
+                // Eğer temizlenen sayı uzunluğu yakınsa ve levenshtein mesafesi <= 2 ise
+                $len = strlen($cleanExtra);
+                if ($len >= 14 && $len <= 22) {
+                    $distance = levenshtein($missingBarcode, $cleanExtra);
+                    if ($distance > 0 && $distance <= 2) {
+                        $suspectedMatches[] = [
+                            'terminal_barcode' => $missingBarcode,
+                            'store_barcode' => $cleanExtra,
+                            'distance' => $distance
+                        ];
+                        unset($extraInStore[$idx]);
+                        $fuzzyFound = true;
+                        \App\Logger::log("[Reconciler-Fuzzy] Şüpheli Eşleşme Bulundu: " . $missingBarcode . " <-> " . $cleanExtra . " (Mesafe: " . $distance . ")");
+                        break;
+                    }
+                }
+            }
+            if (!$fuzzyFound) {
+                $stillMissingAfterFuzzy[] = $missingBarcode;
+            }
+        }
+        $missingInStore = $stillMissingAfterFuzzy;
+        $extraInStore = array_values($extraInStore);
 
         return new ReconciliationResult(
             $terminalBarcodes,

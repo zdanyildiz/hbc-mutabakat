@@ -50,13 +50,12 @@ def ocr_page(img_path: str) -> str:
         clean_img_path = os.path.join(img_dir, "clean_" + img_name)
         
         try:
-            # Local Adaptive Thresholding (LAT) to remove background noise/shadows
+            # Grayscale, enhance contrast and sharpen (better for Tesseract LSTM than harsh binarization)
             subprocess.run([
                 "convert", img_path,
                 "-colorspace", "gray",
-                "-negate",
-                "-lat", "25x25+10%",
-                "-negate",
+                "-level", "15%,85%",
+                "-sharpen", "0x1.5",
                 clean_img_path
             ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             tess_input_path = clean_img_path
@@ -67,7 +66,7 @@ def ocr_page(img_path: str) -> str:
 
         result = subprocess.run([
             "tesseract", tess_input_path, "stdout",
-            "--psm", "6",
+            "--psm", "3",
             "-l", "tur+eng"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", timeout=30, env=custom_env)
         

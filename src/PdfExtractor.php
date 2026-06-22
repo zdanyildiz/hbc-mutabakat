@@ -385,7 +385,7 @@ class PdfExtractor
                 // @phpstan-ignore-next-line
                 $ocr->lang('tur', 'eng');
                 // @phpstan-ignore-next-line
-                $ocr->psm(6);
+                $ocr->psm(3);
                 $text = $ocr->run();
 
                 if (file_exists($pagePath)) {
