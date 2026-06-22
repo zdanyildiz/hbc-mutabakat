@@ -2,6 +2,11 @@
 
 declare(strict_types=1);
 
+// Prevent browser/server caching entirely
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Cache-Control: post-check=0, pre-check=0", false);
+header("Pragma: no-cache");
+
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 
 use App\PdfExtractor;
@@ -104,18 +109,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file'])) {
             background-color: var(--bg-dark);
             color: var(--text-primary);
             min-height: 100vh;
-            padding: 2rem;
+            padding: 1rem;
             overflow-x: hidden;
             background-image: radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.15) 0%, transparent 40%),
                               radial-gradient(circle at 90% 80%, rgba(16, 185, 129, 0.1) 0%, transparent 40%);
         }
 
         .container {
-            max-width: 1600px;
-            margin: 0 auto;
+            max-width: 100%;
+            margin: 0;
             display: flex;
             flex-direction: column;
-            gap: 2rem;
+            gap: 1.5rem;
         }
 
         header {
@@ -265,25 +270,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file'])) {
         }
 
         .results-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 2rem;
+            display: flex;
+            gap: 1.5rem;
+            width: 100%;
         }
-
+ 
         @media (max-width: 1024px) {
             .results-grid {
-                grid-template-columns: 1fr;
+                flex-direction: column;
             }
         }
-
+ 
         .output-card {
             background: var(--card-bg);
             border: 1px solid var(--border-color);
             border-radius: 16px;
             display: flex;
             flex-direction: column;
-            height: 70vh;
+            height: 75vh;
             overflow: hidden;
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .output-card.resizable {
+            resize: horizontal;
+            overflow: auto;
+            flex: none;
+            width: 50%;
+            min-width: 300px;
+            max-width: 90%;
         }
 
         .output-header {
@@ -403,7 +419,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file'])) {
                 </div>
 
                 <!-- Right Panel: OCR Mode -->
-                <div class="output-card">
+                <div class="output-card resizable">
                     <div class="output-header">
                         <div class="output-title">
                             📷 Görsel OCR Modu Çıktısı <span class="badge ocr">Tesseract</span>
