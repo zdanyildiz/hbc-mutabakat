@@ -1,44 +1,81 @@
 # ⚡ HBC Mutabakat Modülü Çalışma Mantığı Dokümantasyonu
 
-Bu doküman, HBC Mutabakat Modülü'nün geliştirme süreci öncesindeki çalışma mantığı ile yapılan iyileştirmeler sonrasındaki güncel çalışma mantığını açıklamaktadır.
+Bu doküman, sistemin Excel ve PDF dosyalarını yüklediği andan itibaren son çıktının üretilmesine kadar geçen tüm süreci adım adım ve aktör bazlı (PHP, Python, JavaScript) açıklamaktadır.
 
 ---
 
-## 1. Önceki Çalışma Mantığı
+## 🔄 Genel Akış Şeması (Adım Adım)
 
-### Excel / CSV Okuma ve Eşleme
-* **Dinamik Sütun Keşfi:** Excel dosyasının ilk 10 satırı taranarak başlığında `"barkod"` ve `"mağaza"` kelimeleri geçen sütunlar dinamik olarak tespit edilmeye çalışılıyordu.
-* **Sütun Ezilme Hatası:** Excel şablonunda birden fazla barkod içeren sütun bulunduğunda (Örn: A sütununda `"Barkod"`, B sütununda `"Müşteri Barkod"`), dinamik döngü son eşleşen sütunu (B sütununu) hafızaya alıyor ve A sütunundaki verilerin haritalanamamasına neden oluyordu. Bu durum, arayüzde birçok barkod için jenerik `"Bilinmeyen Mağaza"` (fallback) değerinin gösterilmesine yol açıyordu.
-* **Gevşek Hata Yönetimi:** Mağaza hücresi boş olduğunda sistem sessizce hata yerine `"Bilinmeyen Mağaza"` atayarak hatanın kaynağının tespit edilmesini zorlaştırıyordu.
-
-### PDF Okuma ve Eşleştirme
-* **Kelime Bazlı Regex Tarama:** PDF metni basitçe kelimelere ayrıştırılıyor ve 16-20 hane arasındaki sayılar Regex ile çekiliyordu.
-* **Font Encoding / OCR Hataları:** Fatura/İrsaliye üreten yazılımların PDF oluştururken yaptığı font gömme hataları (Örn: ekranda `4` görünen sayının kod katmanında `ü` harfine, `1` sayısının `l` harfine dönüşmesi) sebebiyle barkodlar PDF içinde bulunamıyor ve aslen mevcut olan koliler "Eksik" (Kırmızı) olarak listeleniyordu.
-* **Çapraz Doğrulama Yoktu:** PDF içerisindeki satırlarda aynı barkodun birden fazla sütunda (`TemaTakipNo` ve `Kargo Takip No`) yer alması durumu kontrol edilmiyor, satır doğruluğu teyit edilmiyordu.
+```mermaid
+graph TD
+    A[Kullanıcı Arayüzü] -->|1. Dosyaları Gönder| B[public/index.php]
+    B -->|2. Excel Okuma| C[ExcelExtractor.php]
+    B -->|3. PDF Okuma Talebi| D[PdfExtractor.php]
+    D -->|4. OCR Çalıştır| E[reconcile.py (Python)]
+    E -->|5. Sayfaları PNG'ye Çevir| F[pdftoppm]
+    F -->|6. Karakter Okuma| G[Tesseract OCR]
+    G -->|7. Ham Satırları Döndür| E
+    E -->|8. JSON Ham Satırlar| D
+    B -->|9. Eşleştirme Başlat| H[Reconciler.php]
+    H -->|10. Karşılaştır ve Eşle| H
+    B -->|11. JSON Rapor| A
+```
 
 ---
 
-## 2. Güncel Çalışma Mantığı (Yeni Sistem)
+## 👥 Aktörler ve Rolleri
 
-### Excel / CSV Okuma ve Eşleme (Sabit & Güvenli)
-* **Sabit Sütun Mimarisi:** Excel şablonu standart olduğu için gereksiz dinamik sütun aramaları kaldırılmıştır. Sistem doğrudan ve deterministik olarak **`A` sütununu "Barkod"**, **`F` sütununu ise "Mağaza Adı"** olarak kabul eder.
-* **Biçimlendirme ve Veri Temizliği:** PHP'nin büyük sayıları float/scientific notation formatına (Örn: `1.63E+17`) dönüştürmesini engellemek için `getFormattedValue()` kullanılarak hücredeki saf metin çekilir ve sayı dışı tüm karakterler (`\D` regexi ile) arındırılır.
-* **Açık Satır Hataları:** Eğer Excel'de barkodun karşısındaki mağaza alanı boş bırakılmışsa, mutabakatın durmaması için ilgili barkoda doğrudan **`[Mağaza Adı Belirtilmemiş (Satır X)]`** değeri atanır. Böylece veri hatasının Excel'deki tam satır numarası arayüzde listelenir.
+### 1. Frontend: Tarayıcı ve Arayüz Katmanı (`public/assets/js/app.js`)
+* **Dosya Yönetimi:** Sürükle-bırak veya dosya seçici alanları kontrol eder.
+* **İstek Gönderimi:** Kullanıcı "Karşılaştırmayı Çalıştır" butonuna bastığında, yüklenen Excel ve PDF dosyalarını AJAX (fetch) kullanarak arka plana (`index.php?action=reconcile`) gönderir.
+* **Sonuçları Çizme (Rendering):** PHP'den gelen mutabakat sonuç raporunu (JSON) alır; Yeşil (Eşleşti), Kırmızı (Eksik), Sarı (Fazla) ve Şüpheli kartlarını ve arama/filtreleme yapılabilen veri tablosunu ekrana dinamik olarak basar.
+* **Manuel Onay:** Kullanıcının "Şüpheli" barkodları elle onaylayıp "Eşleşti" durumuna çekmesini tarayıcı tarafında yönetir.
 
-### PDF Okuma ve Eşleştirme (Çift Modlu & Çapraz Doğrulamalı)
+---
 
-Modül, sunucu yeteneklerine ve kullanıcının seçimine göre çalışabilen iki farklı okuma moduna sahiptir:
+### 2. Backend Controller: İstek Karşılayıcı (`public/index.php`)
+* **Giriş Kontrolü:** Dosyaların yüklenip yüklenmediğini ve formatlarını kontrol eder.
+* **İş Akışı Yönetimi:** `ExcelExtractor`, `PdfExtractor` ve `Reconciler` sınıflarını sırayla tetikler.
+* **Veritabanı Kayıt:** Eğer MySQL aktif ise, mutabakat sonuçlarını geçmiş raporlara kaydeder.
+* **Çıktı Üretim:** Tüm işlemler bittiğinde oluşan nihai verileri JSON formatında frontend'e (JavaScript) teslim eder.
 
-#### A) Standart Hızlı Mod (Metin Tabanlı)
-* **Satır Bazlı Ayrıştırma:** PDF metni satır satır analiz edilir. Her satırdaki `TemaTakipNo` ve `Kargo Takip No` alanlarında yer alan barkodlar bağımsız olarak taranır.
-* **Satır Çapraz Doğrulaması (Cross-Validation):** Aynı satırda yer alan bu iki barkodun (dönüştürme ve temizlik sonrasında) birbirine eşit olup olmadığı kontrol edilir.
-  * Eğer iki barkod birbirinden farklıysa (Örn: satırdaki kaymalar veya ağır bir kodlama hatası yüzünden), bu durum bir **"PDF Satır Tutarsızlığı"** olarak işaretlenir.
-  * Arayüzde neon kırmızı renkli bir uyarı kartı belirerek uyuşmazlığın yaşandığı **PDF Satır Numarasını, Orijinal Satır İçeriğini ve Okunan İki Farklı Barkodu** listeler.
-* **Kopyalanabilir PDF Arama Kodu:** Karakter kayması yaşayan barkodlar (Örn: `l60056792000ü4202`) için arayüzde kopyalanabilir alan oluşturulur. Kullanıcı bu koda tıklayıp panoya kopyalayarak PDF okuyucusunda arattığında doğrudan ilgili hatalı satıra ulaşabilir.
+---
 
-#### B) Görsel OCR Modu (Hassas & Kesin Sonuç)
-* Arayüzden **"Görsel OCR Modu"** aktif edildiğinde tetiklenir.
-* **Görsel Dönüşümü:** PDF sayfaları sunucuda kurulu olan `Imagick` kütüphanesi yardımıyla yüksek çözünürlüklü (150 DPI) PNG resimlerine dönüştürülür.
-* **Tesseract OCR Okuması:** Resim dosyaları sunucu tarafında çalışan yerel `Tesseract OCR` motoruna gönderilerek Türkçe ve İngilizce dil paketleriyle analiz edilir.
-* **Neden %100 Doğru?** Tesseract OCR, PDF'in arka planındaki bozuk font kodlama (encoding) katmanına değil, doğrudan **görsel piksel yapısına** baktığı için ekrandaki `4` sayısını tam olarak `4` olarak okur. Font hatalarından kaynaklı sapmalar (`ü` veya `l` harfleri) tamamen bypass edilmiş olur.
-* Okuma işlemi tamamlandığında sunucudaki geçici PNG resimleri otomatik olarak silinir.
+### 3. Veri Okuyucu: Excel Çözücü (`src/ExcelExtractor.php`)
+* Excel/CSV dosyasını açar.
+* **Sabit Yapı:** Doğrudan **`A` sütunundaki barkodları** ve **`F` sütunundaki mağaza adlarını** okur.
+* Sayı formatı bozulmalarını engellemek için saf metin olarak okur, sayı dışındaki tüm karakterleri temizleyip PHP'ye temiz bir barkod listesi sunar.
+
+---
+
+### 4. OCR Motoru: Python Metin Çıkarıcı (`src/reconcile.py`)
+> [!IMPORTANT]
+> **Python Eşleştirme Yapmaz!** Python scriptinin tek görevi, PDF dosyasını alıp içindeki yazıları OCR ile okuyarak satır satır ham metin halinde PHP'ye teslim etmektir. Excel barkodlarıyla hiçbir bağı kurmaz veya karşılaştırma yapmaz.
+
+* **Görsel Dönüşümü:** PDF sayfalarını `pdftoppm` aracı ile yüksek çözünürlüklü (300 DPI) PNG resimlerine dönüştürür.
+* **Tesseract Okuması:** Tesseract OCR motorunu tetikleyerek resimlerdeki yazıları okur.
+* **Satır Filtreleme:** Okunan tüm metni satır satır ayırır. Boşlukları siler, 18 karakterden kısa olan satırları (barkod olamayacak kadar kısa olan metinleri) eler.
+* Kalan temizlenmiş **ham satır listesini** JSON formatında PHP'ye geri döndürür.
+
+---
+
+### 5. Eşleştirme Motoru: Eşleştirici (`src/Reconciler.php`)
+> [!NOTE]
+> Eşleştirme ve karşılaştırma mantığının tamamı **PHP** tarafında çalışır.
+
+* **1. Aşama (OCR Eşleme):**
+  * Excel'den okunan her barkodu alır.
+  * Python'dan gelen OCR satır listesinde bu barkodun geçip geçmediğini kontrol eder.
+  * Eğer barkod satırda bulunursa, o barkodu **"Eşleşti (Yeşil)"** listesine ekler ve ilgili satırı havuzdan çıkarır.
+  * Bulamazsa, barkodu geçici olarak **"Eksik (Kırmızı)"** listesine yazar.
+
+* **2. Aşama (Metin Tabanlı Arama Fallback):**
+  * 1. aşama sonunda hala "Eksik" görünen barkodlar için ikinci bir arama başlatır.
+  * Bu kez PDF'in C++ `pdftotext` (veya PHP Smalot) ile çıkarılmış saf metin katmanına odaklanır.
+  * Buradaki satırlardaki bozuk karakterleri (`l => 1`, `E => 8` gibi) düzeltir ve sayı dışı karakterleri arındırır.
+  * Eğer bu düzeltilmiş satır içinde eksik barkod bulunursa, onu eksik listesinden çıkarıp **"Eşleşti (Yeşil)"** listesine taşır.
+
+* **Sonuç Belirleme:**
+  * Excel'de olup PDF'te hiçbir şekilde bulunamayanlar: **Eksik (Kırmızı)**
+  * PDF'te okunup Excel'de karşılığı olmayanlar: **Fazla (Sarı)**
+  * Her iki tarafta da doğrulananlar: **Eşleşti (Yeşil)**

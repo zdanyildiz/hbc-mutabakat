@@ -340,7 +340,7 @@ class PdfExtractor
                 flush();
 
                 $pageImagick = new \Imagick();
-                $pageImagick->setResolution(300, 300); // Optimized resolution
+                $pageImagick->setResolution(300, 300); // Optimized resolution (300 DPI)
                 $pageImagick->readImage($filePath . '[' . $i . ']');
 
                 $pageImagick->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
@@ -380,7 +380,7 @@ class PdfExtractor
                 $tessStart = microtime(true);
                 $ocr = new TesseractOCR($pagePath);
                 // @phpstan-ignore-next-line
-                $ocr->lang('eng');
+                $ocr->lang('tur', 'eng');
                 // @phpstan-ignore-next-line
                 $ocr->psm(6);
                 $text = $ocr->run();

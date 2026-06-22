@@ -46,7 +46,7 @@ def ocr_page(img_path: str) -> str:
         result = subprocess.run([
             "tesseract", img_path, "stdout",
             "--psm", "6",
-            "-c", "tessedit_char_whitelist=0123456789LIM- "
+            "-l", "tur+eng"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", timeout=30, env=custom_env)
         return result.stdout
     except Exception as e:
