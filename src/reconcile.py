@@ -43,11 +43,38 @@ def ocr_page(img_path: str) -> str:
         import os
         custom_env = os.environ.copy()
         custom_env["OMP_THREAD_LIMIT"] = "1"
+        
+        # ImageMagick pre-processing to binarize and clean the image
+        img_dir = os.path.dirname(img_path)
+        img_name = os.path.basename(img_path)
+        clean_img_path = os.path.join(img_dir, "clean_" + img_name)
+        
+        try:
+            # Local Adaptive Thresholding (LAT) to remove background noise/shadows
+            subprocess.run([
+                "convert", img_path,
+                "-colorspace", "gray",
+                "-negate",
+                "-lat", "25x25+10%",
+                "-negate",
+                clean_img_path
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            tess_input_path = clean_img_path
+        except Exception:
+            # Fallback to original image if convert is not available
+            tess_input_path = img_path
+            clean_img_path = None
+
         result = subprocess.run([
-            "tesseract", img_path, "stdout",
+            "tesseract", tess_input_path, "stdout",
             "--psm", "6",
             "-l", "tur+eng"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", timeout=30, env=custom_env)
+        
+        # Cleanup pre-processed image
+        if clean_img_path and os.path.exists(clean_img_path):
+            os.remove(clean_img_path)
+            
         return result.stdout
     except Exception as e:
         sys.stderr.write(f"Tesseract error on {img_path}: {str(e)}\n")

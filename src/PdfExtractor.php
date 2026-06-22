@@ -344,6 +344,9 @@ class PdfExtractor
                 $pageImagick->readImage($filePath . '[' . $i . ']');
 
                 $pageImagick->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
+                // Enhance contrast before thresholding
+                // @phpstan-ignore-next-line
+                $pageImagick->levelImage(0.25 * \Imagick::getQuantum(), 1.0, 0.75 * \Imagick::getQuantum());
                 $pageImagick->thresholdImage(0.5 * \Imagick::getQuantum());
                 $pageImagick->setImageFormat('png');
 
