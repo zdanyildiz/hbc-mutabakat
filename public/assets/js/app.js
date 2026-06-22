@@ -108,7 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const noDataMsg = document.getElementById('noDataMsg');
     const tableSearch = document.getElementById('tableSearch');
     const filterButtons = document.querySelectorAll('.tab-btn');
-    const downloadCsvBtn = document.getElementById('downloadCsvBtn');
+    const downloadExcelBtn = document.getElementById('downloadExcelBtn');
     const showRawDataBtn = document.getElementById('showRawDataBtn');
     const statSuspectedVal = document.getElementById('statSuspectedVal');
     const countSuspected = document.getElementById('countSuspected');
@@ -128,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     let activeFilter = 'all';
+    let allRows = []; // Tablodaki tüm satırların listesi (Excel indirme ve sıralama için kullanılacak)
 
     const liveTimer = document.getElementById('liveTimer');
     let timerInterval = null;
@@ -269,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return name;
         };
 
-        let allRows = [];
+        allRows = [];
 
         // Missing Items (Kırmızı)
         currentData.missingInStore.forEach(barcode => {
@@ -411,31 +412,77 @@ document.addEventListener('DOMContentLoaded', () => {
         buildTable();
     });
 
-    // CSV Download (Client-Side)
-    downloadCsvBtn.addEventListener('click', () => {
-        let csvContent = "\ufeffBarkod / Takip No,Durum,Aciklama\n";
-        
-        currentData.missingInStore.forEach(barcode => {
-            csvContent += `"${barcode}","Eksik","Terminalde var, PDF'te yok"\n`;
-        });
-        currentData.extraInStore.forEach(barcode => {
-            csvContent += `"${barcode}","Fazla","PDF'te var, Terminalde yok"\n`;
-        });
-        currentData.matched.forEach(barcode => {
-            csvContent += `"${barcode}","Eşleşti","Sorunsuz eşleşti"\n`;
-        });
-        currentData.suspectedMatches.forEach(suspect => {
-            csvContent += `"${suspect.terminal_barcode}","Şüpheli Eşleşme","PDF Barkodu: ${suspect.store_barcode}, Mesafe: ${suspect.distance}"\n`;
+    // Excel Download (Dinamik Filtreli ve Barkod Tipli)
+    downloadExcelBtn.addEventListener('click', () => {
+        const searchVal = tableSearch.value.toLowerCase().trim();
+        const filteredData = [];
+
+        allRows.forEach(row => {
+            if (activeFilter !== 'all' && row.type !== activeFilter) {
+                return;
+            }
+
+            const barcodeVal = row.barcode.toLowerCase();
+            const storeBarcodeVal = row.storeBarcode.toLowerCase();
+            const storeNameVal = row.storeName.toLowerCase();
+            
+            const barcodeMatch = barcodeVal.includes(searchVal) || storeBarcodeVal.includes(searchVal);
+            const storeNameMatch = storeNameVal.includes(searchVal);
+
+            if (searchVal === '' || barcodeMatch || storeNameMatch) {
+                let statusText = '';
+                let descText = '';
+                
+                if (row.type === 'missing') {
+                    statusText = 'Eksik';
+                    descText = 'Terminalde okutulmuş ancak Mağaza PDF\'inde bulunamadı.';
+                } else if (row.type === 'extra') {
+                    statusText = 'Fazla';
+                    descText = 'Mağaza PDF\'inde mevcut ancak Terminalde okutulmamış.';
+                } else if (row.type === 'suspected') {
+                    statusText = 'Şüpheli';
+                    descText = 'Yakın eşleşme bulundu.';
+                } else if (row.type === 'matched') {
+                    statusText = 'Eşleşti';
+                    descText = 'Her iki listede de başarıyla eşleşti.';
+                }
+
+                filteredData.push({
+                    terminal_barcode: row.barcode,
+                    pdf_barcode: row.storeBarcode,
+                    store_name: row.storeName,
+                    status: statusText,
+                    description: descText
+                });
+            }
         });
 
-        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.setAttribute("href", url);
-        link.setAttribute("download", `mutabakat_raporu_${currentData.storeName.replace(/[^a-zA-Z0-9]/g, '_')}.csv`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        if (filteredData.length === 0) {
+            alert('İndirilecek veri bulunamadı.');
+            return;
+        }
+
+        // Sunucuya POST etmek için gizli bir form oluştur
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = 'index.php?action=export-excel';
+        form.style.display = 'none';
+
+        const dataInput = document.createElement('input');
+        dataInput.type = 'hidden';
+        dataInput.name = 'data';
+        dataInput.value = JSON.stringify(filteredData);
+        form.appendChild(dataInput);
+
+        const nameInput = document.createElement('input');
+        nameInput.type = 'hidden';
+        nameInput.name = 'store_name';
+        nameInput.value = currentData.storeName;
+        form.appendChild(nameInput);
+
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
     });
 
     // Load past report details

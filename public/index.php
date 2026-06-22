@@ -178,8 +178,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get-report') {
     exit;
 }
 
-// Handle Export CSV for saved reports
-if ($action === 'export-csv') {
+// Handle Export Excel for dynamic data
+if ($action === 'export-excel' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $jsonData = $_POST['data'] ?? '';
+    $storeName = $_POST['store_name'] ?? 'Mutabakat Raporu';
+    $data = json_decode($jsonData, true);
+    
+    if (is_array($data)) {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        $sheet->setCellValue('A1', 'El Terminali (Excel) Barkodu');
+        $sheet->setCellValue('B1', 'PDF Barkodu');
+        $sheet->setCellValue('C1', 'Mağaza Adı');
+        $sheet->setCellValue('D1', 'Durum');
+        $sheet->setCellValue('E1', 'Açıklama');
+        
+        $sheet->getStyle('A1:E1')->getFont()->setBold(true);
+        
+        $rowIdx = 2;
+        foreach ($data as $row) {
+            $sheet->setCellValueExplicit('A' . $rowIdx, $row['terminal_barcode'] ?? '', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            $sheet->setCellValueExplicit('B' . $rowIdx, $row['pdf_barcode'] ?? '', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            $sheet->setCellValue('C' . $rowIdx, $row['store_name'] ?? '');
+            $sheet->setCellValue('D' . $rowIdx, $row['status'] ?? '');
+            $sheet->setCellValue('E' . $rowIdx, $row['description'] ?? '');
+            $rowIdx++;
+        }
+        
+        foreach (range('A', 'E') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+        
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="mutabakat_' . preg_replace('/[^a-zA-Z0-9]/', '_', $storeName) . '.xlsx"');
+        header('Cache-Control: max-age=0');
+        
+        $writer = \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, 'Xlsx');
+        $writer->save('php://output');
+        exit;
+    }
+}
+
+// Handle Export Excel for saved reports
+if ($action === 'export-excel-saved') {
     $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
     if ($id > 0 && $dbEnabled) {
         $report = $db->getById($id);
@@ -192,32 +234,58 @@ if ($action === 'export-csv') {
              * } $data */
             $data = json_decode($report['results_json'], true);
             
-            header('Content-Type: text/csv; charset=utf-8');
-            header('Content-Disposition: attachment; filename="mutabakat_' . preg_replace('/[^a-zA-Z0-9]/', '_', $report['store_name']) . '.csv"');
+            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+            $sheet = $spreadsheet->getActiveSheet();
             
-            $output = fopen('php://output', 'w');
-            if ($output !== false) {
-                // BOM for Excel UTF-8 support
-                fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
-                
-                fputcsv($output, ['Barkod / Takip No', 'Durum']);
-                
-                foreach ($data['missingInStore'] as $barcode) {
-                    fputcsv($output, [$barcode, 'Eksik (Terminalde var, PDFte yok)']);
-                }
-                foreach ($data['extraInStore'] as $barcode) {
-                    fputcsv($output, [$barcode, 'Fazla (PDFte var, Terminalde yok)']);
-                }
-                foreach ($data['matched'] as $barcode) {
-                    fputcsv($output, [$barcode, 'Eşleşti']);
-                }
-                if (isset($data['suspectedMatches'])) {
-                    foreach ($data['suspectedMatches'] as $suspect) {
-                        fputcsv($output, [$suspect['terminal_barcode'], 'Şüpheli Eşleşme (PDF: ' . $suspect['store_barcode'] . ', Mesafe: ' . $suspect['distance'] . ')']);
-                    }
-                }
-                fclose($output);
+            $sheet->setCellValue('A1', 'El Terminali (Excel) Barkodu');
+            $sheet->setCellValue('B1', 'PDF Barkodu');
+            $sheet->setCellValue('C1', 'Durum');
+            $sheet->setCellValue('D1', 'Açıklama');
+            
+            $sheet->getStyle('A1:D1')->getFont()->setBold(true);
+            
+            $rowIdx = 2;
+            foreach ($data['missingInStore'] as $barcode) {
+                $sheet->setCellValueExplicit('A' . $rowIdx, $barcode, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                $sheet->setCellValue('B' . $rowIdx, '-');
+                $sheet->setCellValue('C' . $rowIdx, 'Eksik');
+                $sheet->setCellValue('D' . $rowIdx, 'Terminalde okutulmuş ancak Mağaza PDF\'inde bulunamadı.');
+                $rowIdx++;
             }
+            foreach ($data['extraInStore'] as $barcode) {
+                $sheet->setCellValue('A' . $rowIdx, '-');
+                $sheet->setCellValueExplicit('B' . $rowIdx, $barcode, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                $sheet->setCellValue('C' . $rowIdx, 'Fazla');
+                $sheet->setCellValue('D' . $rowIdx, 'Mağaza PDF\'inde mevcut ancak Terminalde okutulmamış.');
+                $rowIdx++;
+            }
+            foreach ($data['matched'] as $barcode) {
+                $sheet->setCellValueExplicit('A' . $rowIdx, $barcode, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                $sheet->setCellValueExplicit('B' . $rowIdx, $barcode, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                $sheet->setCellValue('C' . $rowIdx, 'Eşleşti');
+                $sheet->setCellValue('D' . $rowIdx, 'Her iki listede de başarıyla eşleşti.');
+                $rowIdx++;
+            }
+            if (isset($data['suspectedMatches'])) {
+                foreach ($data['suspectedMatches'] as $suspect) {
+                    $sheet->setCellValueExplicit('A' . $rowIdx, $suspect['terminal_barcode'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    $sheet->setCellValueExplicit('B' . $rowIdx, $suspect['store_barcode'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                    $sheet->setCellValue('C' . $rowIdx, 'Şüpheli');
+                    $sheet->setCellValue('D' . $rowIdx, 'Yakın eşleşme (Mesafe: ' . $suspect['distance'] . ')');
+                    $rowIdx++;
+                }
+            }
+            
+            foreach (range('A', 'D') as $col) {
+                $sheet->getColumnDimension($col)->setAutoSize(true);
+            }
+            
+            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            header('Content-Disposition: attachment; filename="mutabakat_' . preg_replace('/[^a-zA-Z0-9]/', '_', $report['store_name']) . '.xlsx"');
+            header('Cache-Control: max-age=0');
+            
+            $writer = \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, 'Xlsx');
+            $writer->save('php://output');
             exit;
         }
     }
@@ -349,7 +417,7 @@ if ($dbEnabled) {
                     </div>
                     <div class="action-buttons" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                         <button type="button" class="btn btn-secondary" id="showRawDataBtn" style="background: rgba(37, 99, 235, 0.1); color: var(--secondary); border: 1px solid rgba(37, 99, 235, 0.25);">Ham Barkodları Göster</button>
-                        <button type="button" class="btn btn-secondary" id="downloadCsvBtn">CSV İndir</button>
+                        <button type="button" class="btn btn-secondary" id="downloadExcelBtn">Excel İndir</button>
                     </div>
                 </div>
 
@@ -454,7 +522,7 @@ if ($dbEnabled) {
                                             <td>
                                                 <div class="row-actions">
                                                     <button type="button" class="btn btn-sm btn-view-report" data-id="<?= $report['id'] ?>">Raporu Yükle</button>
-                                                    <a href="index.php?action=export-csv&id=<?= $report['id'] ?>" class="btn btn-sm btn-export">CSV İndir</a>
+                                                    <a href="index.php?action=export-excel-saved&id=<?= $report['id'] ?>" class="btn btn-sm btn-export">Excel İndir</a>
                                                 </div>
                                             </td>
                                         </tr>
