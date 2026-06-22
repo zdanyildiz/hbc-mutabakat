@@ -1,0 +1,266 @@
+==================== SAYFA 1 ====================
+
+  1 | !7.06.2026 07:04:31
+  2 |                                      Mağaza Kargoya Teslim Mutabakat Raporu
+  3 | Mağaza Kodu                   T325
+  4 | Mağaza Adı                    oUTLET lsT DEPo5lTE
+  5 | Mutabakat Taİihi              tl .06.2026 07 :04: 14 +03:00
+  6 | Belge No                      395704
+  7 | Ka rgo Firmasl                Çelik Nakliyat
+  8 | 
+  9 | No      TemaTakipNo              İrs. Seri /    No   İrc. Tarih              SevklD   Alacak Depo           Kargo Takip No
+ 10 | 
+ 11 | 1       160o595920mo74432        LM l 2026001601425 76.06.2026               95282    KKDP89
+ 12 |                                                      72io7io2
+ 13 | 2       160059592000074433       tM 2026001601433 76.06.2026
+ 14 |                                      |                                       95283    KKDP89
+ 15 |                                                      12:02:30
+ 16 | 3       160o595920w74434         tMl2026001601450 16.06.2026                 95284    KKDP89
+ 17 |                                                      12;03;20
+ 18 | 4       16005959200007443 5 tM l202600160145 5 76.06.2026                    952 85   KKDP89
+ 19 |                                                72io6|27
+ 20 |                                                                                                Toplam Koli Adedi: 4
+ 21 | 
+ 22 | 
+ 23 | 
+ 24 | 
+ 25 |                               onaylayan                                                        Onaylayan
+ 26 |                           K          öreVli5i                                                       Per5o
+ 27 |                                                                                                       sl
+ 28 | 
+ 29 | 
+ 30 | 
+ 31 |                       l                                     Mağaza M üdürü
+ 32 | 
+ 33 | 
+ 34 | 
+ 35 | 
+ 36 |                                                                   Açıklama
+
+==================== SAYFA 2 ====================
+
+  1 | Rapor Tarihi 17 ü.2026
+  2 | 
+  3 |                                                Mağaza Kargo Teslim Alım Mutabakat Raporu
+  4 | Mağaza                                       T325 - oUTLET lsT DEPoslTE
+  5 | Mutabakat Ta.ihi                             17 Hazian 2026 07:13
+  6 | Belge Numarasl                               11079
+  7 | 
+  8 | 
+  9 | 
+ 10 | 
+ 11 |                                                                                     Teslim Alınan Koli Bilgileri
+ 12 | S lra   Tema Takip No                         Toplama lD /                        İrs. Seri / No     lrs. Tarih     sevkld       Gönd.        Kar9o Farma           KargoTakipNo                       /
+ 13 | 
+ 14 |                                                      Koli lD                                                                     Depo                                   ATF No
+ 15 |                                                                                                                                                                     l6(ı |:]^9](xüü ıl:]s l]
+ 16 |                                                                                                                                    ,t006      'I:l|ha \alili\aı
+ 17 |         ]6lıl]]6 )]llı)()l]:İ]]                                               I-\tI202600l587J       l{.06.2026      I8552l
+ 18 |                                                                                      2l
+ 19 |         laü[ ]lt I,)](İ (ıl i()]i]                                            L\ll202600ı5690        |2.(16.2(,26    l71.150       'I,169     '|'ılha \atli\al      l600ii8l920(lolı(,752
+ 20 |                                                                                         73
+ 21 |   :t    la\ü (].l]h,]]()ü   lü,l ]t)(l l 7                                    L\l12()26001587.|      |1.06.2(,26     l52l93        T2].l      'l'alhıı \alli\:ıı    l 6o0J-r6920(X]          l l 9(l l 7
+ 22 |                                                                                         55
+ 23 |   .l    I6lıüüi-S.,]üİ(ll J1]I l                                              l-\ll2lr260015980      IJ.06,2026      l92979        T308       'l
+ 24 |                                                                                                                                                    ılha \ılli\.ı    l 6()0j 7892ü ü] l .l:ü: l         l
+ 25 |                                                                                         0.1
+ 26 | 
+ 27 |   5     l 6(lı J:l (l./:lx)(l] 1](]
+ 28 |                                     jl                                        LIll2o26uJl589o        l1.{K.2026      l7t6_12       T]08       Talha \alili\nı       l r,007l092«Xl           l 370 5   l
+ 29 |                                                                                         79
+ 30 |   6     l6lll)76.19]ı)o(()9.|l6(l                                             L\l12025ml5.|99        l1.06.2026      lz20l6        T,t19
+ 31 |                                                                                         3^l
+ 32 |   ,7
+ 33 |         l6(lı)li.ı]r](()(]     l (|.li l l                                        lBI]20260000039    l3.06.2026      l28-i58       T5{_1
+ 34 |                                                                                         69
+ 35 |   s     |6(l]i!İ9:(ı)(|] ]666i                                                L\n202600l52l7          9.06.2o1İ      I   l893l     T6l7
+ 36 |                                                                                         55
+ 37 |         l(,.1] l .( ı (n ıl69 -]; I .l         1551,1.1Sil.]6S]               Ll-12026u»82286        11.0{\2026     l6852.t70    ER\ıüJo2     Çelik \alılir aı      l6]{1 70060 l69727 | ]
+ 38 |                                                                                          ]
+ 39 |  lo     |6]J] rlı)«lı697:s] l                  l5j(,l ]8i§-.](,91j            t-ı .l2(l2«)00822 86   l7.06.2026     l6852.17l    ER]il(J02    Çclii Nailiı,aı       l 6].11 700fu l 69721l] l
+ 40 |                                                                                          :1
+ 41 | 
+ 42 |  lt     1^   ı] l.üı (n lI69]]31:              ]   j5.,1.lsi§ ]6,),,)         ı-Ll202«x 822{16       11,06,2026     l6852.|72    t]R\rc02     Çcıik \atliıaı        l6_]_ll 70060 İ 6972!l]2
+ 43 |                                                                                          3
+ 44 |    ]    ]6j.l I]iüı )a){ l] (i)7 ı).1{         l5a6I.1§rl, ı7ü)s              L1.1202«ı]082286       11.06.2026     l6852]73     ER\1002      Ç.lit \aHi\aı         l 6].l l 70060 l 69?30{.l
+ 45 |                                                                                          3
+ 46 | 
+ 47 |  l:]    ]i) 1l İ ;ü)l]6(li(}97]l)]6            ]5j61.lıjil,]709               LLI202600{182286       17.06.2|J26    l6852474     ER\fu02      Çelik Nakli\aı        l 634l   7ffJ60 ı 69730]6
+ 48 |                                                                                          :]
+ 49 | 
+ 50 |  1_1    lll i.{ I rl)ttn|ı69]tl)]r             1 i 5..1 .1s a   ıi- ]]liI     LLl202ai(l0082286      17.ü.2026      l6852J7s     ERltl{Jo2    Çeıik \atli\al        l63.1l 700«) l 697]ü )ü7
+ 51 |                                                                                          ]
+ 52 |  lj     ](l].l l ](ıü)anIl697.]()79            l5i(,l ]ti5S,l7l2              LI-I202600082286       |7.L6.2|J26    l6852476     ER[1002      Çelil NaHi\aı         l 63.1ı 7«]60       t   6973079
+ 53 |                                                                                          3
+ 54 |  l6     l6].1ı]lı)6(lI69].l0sl)                l   i56l]srs-]?].r             Ll,1202@01182286       17.06.2026     l6852.17ı    ERı\1002     Ç.lil NaHi\ aı        l a,:l.|l 70060 l (ı973(180
+ 55 |                                                                                          ]
+ 56 |  l7     ı6,i.lliı[ra){)]69rtlıs          l     1ii(.l..l§<§-]:l]              t-LI2026u]082286       |1 06.2026     l6852-ı78    !]R\1002     Ç.lit \aui\aı         l 6]] l 7006{J l 69730          8l
+ 57 |                                                                                          .]
+ 58 | 
+ 59 |  l8     ]6]{6.{lİn]I:]9()           jr]        l s563ı)-l(1.1_6j      ]   7   l   ,Ll2026un82252     16.06.2026     12957371     sI]tl0o2     Çelik Nıklival        l 63.16..l{{)a,()   l 3903    i 9:]
+ 60 |                                                                                          0
+ 61 |  l9     l6 ].l-'ıı)t)6(ll]l(|:]?(,-                l5as:]6ü)r,]]              l.ı.I202«rco8226.{     16 06.2026     l0otl82]7    ll.L\ll]o2   Ç.lik \attiıaı        l63]7(ff)«,(ıı027i67
+ 62 |                                                                                          _l
+ 63 | 
+ 64 |  20     i6],7l ]ıı)«] I 26{ı5.|] l             l S5a.:5:]S l,:t977            LI.l2026una2261        16 06.2026     !0008275     1L{\,l&2     Ç.lil }iakli] al      l637] 70060l2665.|]l
+ 65 |                                                                                          .|
+ 66 | 
+ 67 |         l6 ]slİllıüan ı:a] 6() |.l      i                                     LLI2üJ261yJ0a2o21      16 06.2026     97612033      ]\l0o2      Çcljk Nakli! aı       l6:}80uJ060]0l( l:l5
+ 68 | 
+ 69 | 
+ 70 | onaylayan (Kargo GoreVllsı)                                                                                 onaylayan (Depo Görevlisi)
+ 71 |                                                                                                                                                                              ,-
+ 72 | 
+ 73 |                                                                                               l\,'lağaza M üdürü
+
+==================== SAYFA 3 ====================
+
+  1 | \ıo02    Çelil Na\li\.ıı                                 60766
+  2 |                                                                                                                                                                                      j
+  3 |        l6]tl(X)fi )(ı020 l 60766                  l556Jl2.19-]        LL|2o26ufu82291            |7.06.2026        97650.ü9ı                                l 638(,000602(,
+  4 | 
+  5 |                                                                                    2
+  6 | ]]     l6{1920(ı6{ı1.178]] l3_,]                  l55.195086-1        Ll ]2026ün082294           11 üJ{,.2('26     916504a9     Ilo02    Çelik \aUi\"t      t   Gl{920060 ı .ı783 | 3]
+  7 |                                                                                    2
+  8 | ].1    l (,.|.l920060      l.J$0025 l             l555 (]|G2          LL.l2026UJ08202ı           |6.M.züJ26        97GI2(l27    l\1002   Çelik \akti\ iı    l 6.{.192(İJ60 l .l8«,2 5 l
+  9 | 
+ 10 |                                                                                    5
+ 11 | 
+ 12 |        l6J,l92( ı(ı(ı01]80 l l 56                 l55603OXl]]         l,Ll2026o0o82o11           |6.06.2026        97612(|28    \l002    Çelil Nauilaı      16.1.1920060 ı ]80I l j6
+ 13 |                                                                                    5
+ 14 |                                                                                                                                                                                            l 6 l
+ 15 |        l (ı.1.192(l( ı60 l .t8lj l l rı      l    l55603al9G38        LLı20260008202J            l6.06.2026        91612029     \ıo02    Çelik Nak!i\al     l6.149200601.11i0l
+ 16 |                                                                                    5
+ 17 | 
+ 18 | ]r     l 6.{-.l9:()({,(J   |       .1ll028.1()    l556l772&3          Ll -l2026()00 8202:l       |6.06,2026        9164203ü)    \t0()2   Ç.liİ Naklivaı     l 6l-{9 200601         48028]ül
+ 19 |                                                                                    5
+ 20 | 
+ 21 | ]s     l6 J"l92ü j()60l_|8( l.+%2                 l556]l896t          l,L.l2üJ2«ll0a2b24         16.06.2026        976-{203l    \1002    Çelik \atJilaı     l6{92()()60|{li0]962
+ 22 |                                                                                    5
+ 23 | 
+ 24 | ],ı    l6.1-.l92l,{)60l.|8056]]              l    l55fı]6-102-    1   LLl2026tİ08229..l          \7.06.2026        97650{90     \l002    Çelik \atli\aı     l 6.1..192fi160l.|ıj056         ] l
+ 25 |                                                                                    2
+ 26 |        lü.].l92( ()60 ! {ll0575:t                 ı 556:17:ı   8+ l   LLI202«Xo82024             l(,.(K.2026       976120j2     \{fi]2   Çelil Na}.li\aı    l 6.149        2ft60l _ts057 i3
+ 27 |                                                                                    j
+ 28 | il     l 6.+.l92ı   ru60 l _1,106]:16             1j5rı}2536l         1.1    .l2(l2«ül*l8229.1   l7 .ıJ«-2(lz6     97(,50.192   \I0{]2   Ç.lik \akli\al     t 6{-+9        20060 l {8(rıj}.']6
+ 29 |                                                                                     7
+ 30 | 1]     |   6]-192ıİ 160 ].lı06899                 l55G{689r- l        LLl2026(ü8229,1            11.06.2b26        97650493     \I002    Çelil, \akli\al    l 6H92(          X)60l.|8Ml8')9
+ 31 | 
+ 32 | 
+ 33 |        ı 6.1_192(ı,60      l       ]8M920         l556]689_9          I -|   ]202(/{xJa2291      11.b6 2026        97650494     \fm2     Ç.lil Nakli\aı     l 6.1-.19 200601       J8069 20
+ 34 |                                                                                    2
+ 35 | 1.1    l
+ 36 |            (ı${920060      l .t8G498         5    ı s56-172]5_1       1,1    ,l2o26ıJ{yJa2291    1,1   .(,6.2026   97650415     \l002    Çe|il, \alJi1 aı   l 6.{.1920060l         {80(9{l5
+ 37 |                                                                                     2
+ 38 | 
+ 39 |        |   6.1.192üı6o     l .180729         l    l556{87l5-1         LLl2ıJ2«Kn82791            11.|J6.2o26       9?6soj(x     \l002    Çelil, \aklilaı    16.1-.19]00601.180729              l
+ 40 |                                                                                     2
+ 41 |        l6.u9]d)60l.|807]]0                        l 5 56{897:t_   l   l-t.l202«(ü8229{           11.06.2026        9165u97      \t002    Ç.lik NaLli\aı         l 6]-+92t{60 l {8073.t0
+ 42 | 
+ 43 |                                                                                     2
+ 44 |        l6]-|92(,060 l.}ıit)7:ı.t:ı                l556489D_l          LLl20260(()8229]           l1.06.2026        97650.{»     \l0(|2   ÇcIil \akli\aı         l 611920o60l        ]tl( |73J3
+ 45 |                                                                                     2
+ 46 | ls     l 6.1..l9:üı60l             .ı8073 i( l    l556{89(X-7         LLl20260008229.{           l7,«ı.2026        9?650.198    \I002    Ç.lil \akli\aı         l611920060 1.1807:] 50
+ 47 |                                                                                     2
+ 48 |            6]_l92(ı0601.1{i07650                  l5j6+98]e2          I-1.I2026«,08229.ı         |,7.06.2(J26      976505((ı    \10(ı2   Çelik \akli\aı         l (il{921J060      l.t8076 5()
+ 49 |        ]
+ 50 | 
+ 51 | 
+ 52 | 
+ 53 | 
+ 54 |  11j   ı   6.ı-ı92( ı,6u ı .tıltı775 ı            l5J650]95-]         l -Ll2|J26l.xyJa2291       1,7.06-2026       9765050ı     \Im]     Ç.lik \akli\at         l*+92(n6OlJ80775l
+ 55 |                                                                                     2
+ 56 | 
+ 57 |  ll    l (,.1.192ix 160 l          {807?3]         I55(ı5{'-l^ll-]    LLl20260008229-|           11.|J6.7026       97650502     It002    Çelik \akli\aı         l6.t 1920060ı.l80778.1
+ 58 |                                                                                     2
+ 59 | 
+ 60 |  ]]    ı (,.|.+92( ı 160
+ 61 |                                j   .l80779{        l55(ı50{612        LLl202«ff8229{
+ 62 |                                                                                     ,).
+ 63 |                                                                                                  |7.06.2026        9765050]     \f0(,]   Ç.lik \illi\aı         l 61.192lJ060 ı {8(,779_1
+ 64 | 
+ 65 | 
+ 66 | 
+ 67 |        l (ı.t l92(P60 l ]1i0785              2     l556j0{,5_2        |,l,I2.J2«,<l082291        l7,ıJ6.2026       97550504     \l002    Çclik \aklilaı         l 6.1.1920060 l {8(l71i 52
+ 68 | 
+ 69 |                                                                                     2
+ 70 | _1.1       l6.+19200601 {808.]ıJ7                  l55653]93_ı        LL,|z(l26Ix J82294         |'l .|X,.2026     97650505     ıI002    Ç.liL \alli\aı         l 6{.19200601.11l()8]r07
+ 71 | 
+ 72 |                                                                                     2
+ 73 | 
+ 74 |  1i        l6.t.t92ü)060|{808]              l 5    l5565]6l5-I        LI.12026(n08229,ı          11.06.2026        97650507     \l«/2    Ç.lik \:,Ui\aı         | 6-1-19   20060l ] 8t 8] ) 5
+ 75 |                                                                                     2
+ 76 | 
+ 77 |  l(,       l6.1-.l92 0( )60l J8083 l li            l556j]572-3        LL.l2üJ260$Ja2294          |1.«).2026        9765()j06    \l002    Ç.ıik NaIli\aı         l6t1920060l.ltJ08:1           lıi
+ 78 |                                                                                     1
+ 79 |  l.        ]6{-l92(İı6tll,t808327                  l556J](,27-2       I.1,12üJ2{,0üJ|J822!)4     |1.06,2026        97650508     ]\l002   Çelik ı-aUival         l 64412Otıaıo      1.1808] 27
+ 80 |                                                                                     2
+ 81 | .ls        l6J.l92(ü601.1808366                    15565.]1175-,|     Ll,12026{10082291          |,7 .06.2|J26     97650509     \{002    Çelik Nauilat          l 644920060l        ]808]66
+ 82 |                                                                                     2
+ 83 | 
+ 84 | -l9        l 6J{920(160        1.180872.1          ı 5565.178&1        LLl202(,4r$82294          1,7   -06.2026    976505l()     \t002   Çelik NaUi\"t          l 64:19 2l]060 l {8087 ].|
+ 85 | 
+ 86 |                                                                                     2
+ 87 | 
+ 88 | onaylayan (Kargo GoreVlisi)                                                                                onaylayan (Depo Göre Vlisi
+ 89 | 
+ 90 | 
+ 91 | 
+ 92 |                                                                                           lvlağaza Mudürü
+
+==================== SAYFA 4 ====================
+
+  1 | -ı
+  2 |        l(,}l92ll l(,( |.|8088 |
+  3 |                     l                  l55655:j+l!    1-1.1202«xn8229J       11 o{,.2IJ26   976505l l        \lu|2       Ç.lil \a(lilaı     l *193@60     l .l8o88   I   7
+  4 |                                                                2
+  5 | 5l     l(l{-l9!ıl,60l]808873           l5565525+62    I_I_I202a,{x,O{a229]   |7,|x,2026     916505l2         \l({,2      Çclik \aui\al      l 61112ff60   ı.l8(,887:]
+  6 |                                                                2
+  7 | 
+  8 |        l6{92ıXl(,(, l {8089.15         l5565j]8]_]    l.t-I202a,(XJO8229{    l?.(ı6.2026    97650!l3         \l0()2      Ç.lik Nalili\ aı   l6{-192o0«ı1 48o893 5
+  9 |                                                                2
+ 10 | 
+ 11 | 
+ 12 | 
+ 13 | 
+ 14 |                                                                                                                                Toplam Koli Adedi: 52
+ 15 | 
+ 16 |                                           Eşleşmediği lçi n Geri Gönderilen Koli Bilgi|eri
+ 17 |                                         Gönderen                                                                                                 Bolge Depo
+ 18 | slra        koli Barkodu
+ 19 |                                           Depo
+ 20 |                                                       Alan Depo              İrs. Tarih            SeVk ld               Kargo Firma
+ 21 |                                                                                                                                                 sevkiyatl ml?
+ 22 | 
+ 23 | 
+ 24 | 
+ 25 | 
+ 26 |                                                                                                                                Toplam Koli Adedi: 0
+ 27 | 
+ 28 |                                                                      Hasarlı Koli Bilgileri
+ 29 |      slra Tema Takip No                  Toplama lD / lrs. seri / No lrs. Tarih       sevkld Gönd.                          Kar9o Firma         KargoTakipNo                 /,
+ 30 |                                             Koli lD                                                               Depo                              ATF No
+ 31 | 
+ 32 | 
+ 33 | 
+ 34 | 
+ 35 |                                                                                                                                      Toplam Koli Adedi: 0
+ 36 | 
+ 37 | 
+ 38 | 
+ 39 | 
+ 40 | onaylayan (Kargo Görevlisi)                                                        onaylaya    (Dep o GörevllSi
+ 41 | 
+ 42 | 
+ 43 | 
+ 44 | 
+ 45 |                                                                     Mağaza [iüdürü
+ 46 | 
+ 47 | 
+ 48 | 
+ 49 | 
+ 50 |                                                      (t L.li Jot t,"^"las{:n* nJ;(^Qh r
+ 51 |                                                  ,}"r2 .€,"L i:l,,"{v"-
+ 52 |                                                                        rls                     j! ,ı]lJ qso !|l.ı!r|t
+ 53 |                                                                        ,sl
+
