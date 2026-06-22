@@ -411,7 +411,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file'])) {
                         <div class="output-title">
                             📄 Metin Modu Çıktısı <span class="badge">pdftotext</span>
                         </div>
-                        <button class="copy-btn" onclick="copyToClipboard('textOutput')">Metni Kopyala 📋</button>
+                        <button class="copy-btn" onclick="copyToClipboard('textOutput', this)">Metni Kopyala 📋</button>
                     </div>
                     <div class="output-body">
                         <pre id="textOutput"><?= htmlspecialchars($formattedText !== '' ? $formattedText : 'Herhangi bir metin çıkarılamadı.') ?></pre>
@@ -424,7 +424,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file'])) {
                         <div class="output-title">
                             📷 Görsel OCR Modu Çıktısı <span class="badge ocr">Tesseract</span>
                         </div>
-                        <button class="copy-btn" onclick="copyToClipboard('ocrOutput')">Metni Kopyala 📋</button>
+                        <button class="copy-btn" onclick="copyToClipboard('ocrOutput', this)">Metni Kopyala 📋</button>
                     </div>
                     <div class="output-body">
                         <pre id="ocrOutput"><?= htmlspecialchars($formattedOcr !== '' ? $formattedOcr : 'Herhangi bir OCR metni çıkarılamadı.') ?></pre>
@@ -448,10 +448,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file'])) {
             document.getElementById('loaderOverlay').style.display = 'flex';
         });
 
-        function copyToClipboard(elementId) {
+        function copyToClipboard(elementId, btn) {
             const text = document.getElementById(elementId).innerText;
             navigator.clipboard.writeText(text).then(() => {
-                alert('Metin başarıyla panoya kopyalandı.');
+                if (btn) {
+                    const originalText = btn.innerHTML;
+                    btn.innerHTML = 'Kopyalandı! ✓';
+                    btn.style.borderColor = 'var(--secondary)';
+                    btn.style.color = 'var(--secondary)';
+                    setTimeout(() => {
+                        btn.innerHTML = originalText;
+                        btn.style.borderColor = '';
+                        btn.style.color = '';
+                    }, 2000);
+                }
             }).catch(err => {
                 console.error('Kopyalama hatası: ', err);
             });
