@@ -46,34 +46,31 @@ graph TD
 * **Sabit Yapı:** Doğrudan **`A` sütunundaki barkodları** ve **`F` sütunundaki mağaza adlarını** okur.
 * Sayı formatı bozulmalarını engellemek için saf metin olarak okur, sayı dışındaki tüm karakterleri temizleyip PHP'ye temiz bir barkod listesi sunar.
 
----
-
 ### 4. OCR Motoru: Python Metin Çıkarıcı (`src/reconcile.py`)
 > [!IMPORTANT]
 > **Python Eşleştirme Yapmaz!** Python scriptinin tek görevi, PDF dosyasını alıp içindeki yazıları OCR ile okuyarak satır satır ham metin halinde PHP'ye teslim etmektir. Excel barkodlarıyla hiçbir bağı kurmaz veya karşılaştırma yapmaz.
 
 * **Görsel Dönüşümü:** PDF sayfalarını `pdftoppm` aracı ile yüksek çözünürlüklü (300 DPI) PNG resimlerine dönüştürür.
-* **Tesseract Okuması:** Tesseract OCR motorunu tetikleyerek resimlerdeki yazıları okur.
-* **Satır Filtreleme:** Okunan tüm metni satır satır ayırır. Boşlukları siler, 18 karakterden kısa olan satırları (barkod olamayacak kadar kısa olan metinleri) eler.
+* **Tesseract Okuması:** Tesseract OCR motorunu tetikleyerek resimlerdeki yazıları okur. Tablo satır takibini optimize etmek için **`--psm 6`** modu kullanılır.
+* **Filtreleme:** Satırlardaki anlamsız boşluklar temizlenir. Alt satırlara kayabilecek kısa barkod parçalarını kaybetmemek için minimum uzunluk filtresi 1 karaktere indirilmiştir.
 * Kalan temizlenmiş **ham satır listesini** JSON formatında PHP'ye geri döndürür.
-
----
 
 ### 5. Eşleştirme Motoru: Eşleştirici (`src/Reconciler.php`)
 > [!NOTE]
 > Eşleştirme ve karşılaştırma mantığının tamamı **PHP** tarafında çalışır.
 
-* **1. Aşama (OCR Eşleme):**
+* **1. Aşama (OCR Eşleme & Bölünmüş Satır Kurtarma):**
   * Excel'den okunan her barkodu alır.
   * Python'dan gelen OCR satır listesinde bu barkodun geçip geçmediğini kontrol eder.
-  * Eğer barkod satırda bulunursa, o barkodu **"Eşleşti (Yeşil)"** listesine ekler ve ilgili satırı havuzdan çıkarır.
-  * Bulamazsa, barkodu geçici olarak **"Eksik (Kırmızı)"** listesine yazar.
+  * **Akıllı Kurtarma (OCR):** Eğer tam eşleşme bulunamazsa, barkodun bölünüp bölünmediği kontrol edilir. Barkodun ilk kısmı (prefix) bir satırda, son haneleri (suffix, 1-4 karakter) hemen ardındaki satırlarda yer alıyorsa bu iki parça birleştirilerek barkod kurtarılır ve satırlar havuzdan silinir.
+  * Başarıyla eşleşen barkodlar **"Eşleşti (Yeşil)"** listesine eklenir. Bulunamazsa geçici olarak **"Eksik (Kırmızı)"** listesine yazılır.
 
-* **2. Aşama (Metin Tabanlı Arama Fallback):**
+* **2. Aşama (Metin Tabanlı Arama Fallback & Bölünmüş Arama):**
   * 1. aşama sonunda hala "Eksik" görünen barkodlar için ikinci bir arama başlatır.
   * Bu kez PDF'in C++ `pdftotext` (veya PHP Smalot) ile çıkarılmış saf metin katmanına odaklanır.
-  * Buradaki satırlardaki bozuk karakterleri (`l => 1`, `E => 8` gibi) düzeltir ve sayı dışı karakterleri arındırır.
-  * Eğer bu düzeltilmiş satır içinde eksik barkod bulunursa, onu eksik listesinden çıkarıp **"Eşleşti (Yeşil)"** listesine taşır.
+  * Buradaki satırlardaki bozuk karakterleri (`l => 1`, `E => 8`, `O => 0`, `B => 8`, `[` => 1 vb.) genişletilmiş karakter haritasıyla düzeltir ve sayı dışı karakterleri arındırır.
+  * **Akıllı Kurtarma (Metin):** Metin katmanındaki CMap encoding ve tablo yapısı nedeniyle bölünmüş barkodlar bölünmüş arama mantığıyla kurtarılır.
+  * Eğer bu düzeltilmiş ve kurtarılmış satır içinde eksik barkod bulunursa, onu eksik listesinden çıkarıp **"Eşleşti (Yeşil)"** listesine taşır.
 
 * **Sonuç Belirleme:**
   * Excel'de olup PDF'te hiçbir şekilde bulunamayanlar: **Eksik (Kırmızı)**
