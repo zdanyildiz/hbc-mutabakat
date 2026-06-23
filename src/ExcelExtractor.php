@@ -59,7 +59,7 @@ class ExcelExtractor
 
             // Sadece sayısal kısmı temizleyelim
             $barcodeStrCleaned = preg_replace('/\D/', '', $barcodeStr);
-            if ($barcodeStrCleaned !== null && strlen($barcodeStrCleaned) >= 12 && strlen($barcodeStrCleaned) <= 20) {
+            if ($barcodeStrCleaned !== null && strlen($barcodeStrCleaned) >= 5 && strlen($barcodeStrCleaned) <= 30) {
                 $barcodes[] = $barcodeStrCleaned;
             }
         }
@@ -117,7 +117,7 @@ class ExcelExtractor
 
             // Sadece sayısal kısımları alalım
             $barcodeStrCleaned = preg_replace('/\D/', '', $barcodeStr);
-            if ($barcodeStrCleaned === null || strlen($barcodeStrCleaned) < 12 || strlen($barcodeStrCleaned) > 20) {
+            if ($barcodeStrCleaned === null || strlen($barcodeStrCleaned) < 5 || strlen($barcodeStrCleaned) > 30) {
                 continue;
             }
 

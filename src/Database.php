@@ -82,9 +82,10 @@ class Database
      *
      * @param string $storeName
      * @param ReconciliationResult $result
+     * @param string|int $companyId
      * @return int|null
      */
-    public function save(string $storeName, ReconciliationResult $result): ?int
+    public function save(string $storeName, ReconciliationResult $result, string|int $companyId = '1'): ?int
     {
         if ($this->pdo === null) {
             return null;

@@ -98,11 +98,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const statMatchedVal = document.getElementById('statMatchedVal');
     const statMissingVal = document.getElementById('statMissingVal');
     const statExtraVal = document.getElementById('statExtraVal');
+    const statInvalidVal = document.getElementById('statInvalidVal');
     
     const countAll = document.getElementById('countAll');
     const countMissing = document.getElementById('countMissing');
     const countExtra = document.getElementById('countExtra');
     const countMatched = document.getElementById('countMatched');
+    const countInvalid = document.getElementById('countInvalid');
     
     const tableBody = document.getElementById('tableBody');
     const noDataMsg = document.getElementById('noDataMsg');
@@ -119,6 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
         matched: [],
         missingInStore: [],
         extraInStore: [],
+        invalidBarcodes: [],
         barcodeStores: {},
         pdfOriginalWords: {},
         pdfMismatches: [],
@@ -176,6 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentData.matched = data.result.matched;
                 currentData.missingInStore = data.result.missingInStore;
                 currentData.extraInStore = data.result.extraInStore;
+                currentData.invalidBarcodes = data.result.invalidBarcodes || [];
                 currentData.barcodeStores = data.barcode_stores || {};
                 currentData.pdfOriginalWords = data.pdf_original_words || {};
                 currentData.pdfMismatches = data.pdf_mismatches || [];
@@ -226,22 +230,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const misCount = currentData.missingInStore.length;
         const exCount = currentData.extraInStore.length;
         const susCount = currentData.suspectedMatches.length;
+        const invCount = currentData.invalidBarcodes.length;
 
         statMatchedVal.textContent = mCount;
         statMissingVal.textContent = misCount;
         statExtraVal.textContent = exCount;
         statSuspectedVal.textContent = susCount;
+        if (statInvalidVal) statInvalidVal.textContent = invCount;
 
         const statMatchedDesc = document.getElementById('statMatchedDesc');
         if (statMatchedDesc) {
             statMatchedDesc.textContent = `OCR: ${currentData.matchedOcrCount} | Metin: ${currentData.matchedTextCount}`;
         }
 
-        countAll.textContent = mCount + misCount + exCount + susCount;
+        countAll.textContent = mCount + misCount + exCount + susCount + invCount;
         countMatched.textContent = mCount;
         countMissing.textContent = misCount;
         countExtra.textContent = exCount;
         countSuspected.textContent = susCount;
+        if (countInvalid) countInvalid.textContent = invCount;
 
         // Render PDF Mismatches Warning (Disabled as per user request)
         const mismatchContainer = document.getElementById('mismatchContainer');
@@ -280,6 +287,23 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         allRows = [];
+
+        // Hatalı (Invalid) Barkodlar (Mor)
+        currentData.invalidBarcodes.forEach(barcode => {
+            allRows.push({
+                type: 'invalid',
+                barcode: barcode,
+                storeBarcode: '-',
+                storeName: 'LCW (Hatalı Barkod)',
+                html: `<tr class="row-invalid" data-type="invalid">
+                    <td class="font-semibold" style="color: #8b5cf6;">${escapeHtml(barcode)}</td>
+                    <td class="text-muted">-</td>
+                    <td style="color: #8b5cf6; font-weight: 500;">LCW (Hatalı Uzunluk)</td>
+                    <td><span class="badge badge-invalid">Hatalı</span></td>
+                    <td style="color: #8b5cf6; font-size: 0.85rem;">Excel'de bulunan bu barkod 18 hane kuralına uymuyor (Uzunluk: ${barcode.length}).</td>
+                </tr>`
+            });
+        });
 
         // Missing Items (Kırmızı)
         currentData.missingInStore.forEach(barcode => {
@@ -454,6 +478,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else if (row.type === 'matched') {
                     statusText = 'Eşleşti';
                     descText = 'Her iki listede de başarıyla eşleşti.';
+                } else if (row.type === 'invalid') {
+                    statusText = 'Hatalı';
+                    descText = `Excel'de bulunan bu barkod 18 hane kuralına uymuyor (Uzunluk: ${row.barcode.length}).`;
                 }
 
                 filteredData.push({
@@ -506,6 +533,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         currentData.matched = data.result.matched;
                         currentData.missingInStore = data.result.missingInStore;
                         currentData.extraInStore = data.result.extraInStore;
+                        currentData.invalidBarcodes = data.result.invalidBarcodes || [];
                         currentData.pdfOriginalWords = {}; // clear for past db reports
                         currentData.pdfMismatches = []; // clear for past db reports
                         currentData.suspectedMatches = data.result.suspectedMatches || [];

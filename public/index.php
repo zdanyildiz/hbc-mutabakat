@@ -109,7 +109,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
             $storeName = 'Eşleşme Sonucu';
         }
 
-        $result = $reconciler->reconcile($excelPath, $pdfPaths);
+        $companyId = trim((string)($_POST['company_id'] ?? '1'));
+
+        $result = $reconciler->reconcile($excelPath, $pdfPaths, $companyId);
 
         // Generate barcode to store mapping
         $excelMap = $excelExtractor->extractMap($excelPath);
@@ -127,7 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         $savedId = null;
         if ($dbEnabled) {
             $dbStart = microtime(true);
-            $savedId = $db->save($storeName, $result);
+            $savedId = $db->save($storeName, $result, $companyId);
             $dbElapsed = round(microtime(true) - $dbStart, 4);
             \App\Logger::log("Veritabanı kayıt işlemi tamamlandı - Süre: {$dbElapsed} saniye (ID: {$savedId})");
         }
@@ -367,9 +369,17 @@ if ($dbEnabled) {
                 </div>
                 
                 <form id="reconcileForm" class="reconcile-form">
-                    <div class="form-group">
-                        <label for="store_name">Araç Plakası <?= $dbEnabled ? '' : '<span class="optional-text">(İsteğe Bağlı)</span>' ?></label>
-                        <input type="text" id="store_name" name="store_name" placeholder="Örn: 34ABC123" <?= $dbEnabled ? 'required' : '' ?>>
+                    <div class="form-row" style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+                        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                            <label for="company_id">Firma</label>
+                            <select id="company_id" name="company_id" required style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); font-family: inherit; font-size: 0.95rem; outline: none; cursor: pointer; transition: border-color 0.2s;">
+                                <option value="1" selected>LCW</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+                            <label for="store_name">Araç Plakası <?= $dbEnabled ? '' : '<span class="optional-text">(İsteğe Bağlı)</span>' ?></label>
+                            <input type="text" id="store_name" name="store_name" placeholder="Örn: 34ABC123" <?= $dbEnabled ? 'required' : '' ?> style="width: 100%;">
+                        </div>
                     </div>
 
 
@@ -430,7 +440,7 @@ if ($dbEnabled) {
                 <div id="mismatchContainer" style="display:none; margin-bottom: 1.5rem;"></div>
 
                 <!-- Stats Grid -->
-                <div class="stats-grid">
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
                     <div class="stat-box stat-matched">
                         <div class="stat-value" id="statMatchedVal">0</div>
                         <div class="stat-label">Tam Eşleşen Koliler</div>
@@ -451,6 +461,11 @@ if ($dbEnabled) {
                         <div class="stat-label">Şüpheli Eşleşmeler</div>
                         <div class="stat-desc">Yakın benzerlik, manuel onay bekliyor</div>
                     </div>
+                    <div class="stat-box stat-invalid">
+                        <div class="stat-value" id="statInvalidVal">0</div>
+                        <div class="stat-label">Hatalı Barkodlar</div>
+                        <div class="stat-desc">Uzunluk kuralına uymayanlar</div>
+                    </div>
                 </div>
 
                 <!-- Filter & Search Bar -->
@@ -460,6 +475,7 @@ if ($dbEnabled) {
                         <button class="tab-btn tab-missing" data-filter="missing">Eksikler (<span id="countMissing">0</span>)</button>
                         <button class="tab-btn tab-extra" data-filter="extra">Fazlalar (<span id="countExtra">0</span>)</button>
                         <button class="tab-btn tab-suspected" data-filter="suspected">Şüpheli (<span id="countSuspected">0</span>)</button>
+                        <button class="tab-btn tab-invalid" data-filter="invalid">Hatalı (<span id="countInvalid">0</span>)</button>
                         <button class="tab-btn tab-matched" data-filter="matched">Eşleşenler (<span id="countMatched">0</span>)</button>
                     </div>
                     <div class="search-box">

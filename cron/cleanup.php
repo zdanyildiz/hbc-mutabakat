@@ -47,5 +47,19 @@ foreach ($targetDirs as $dir) {
     }
 }
 
+// Log dosyası temizleme (Log Rotation) işlemi
+$logFile = $baseDir . '/var/logs/app.log';
+if (is_file($logFile)) {
+    // 10 MB limit (10 * 1024 * 1024)
+    if (filesize($logFile) > 10485760) {
+        $backupFile = $baseDir . '/var/logs/app.log.bak';
+        @unlink($backupFile); // Varsa eski yedeği sil
+        if (@rename($logFile, $backupFile)) {
+            Logger::log("[Cron-Cleanup] Log dosyası 10MB boyutunu aştığı için sıfırlandı. Eski loglar app.log.bak dosyasına aktarıldı.");
+        }
+    }
+}
+
 Logger::log("[Cron-Cleanup] Temizleme tamamlandı. Toplam silinen geçici dosya adedi: {$deletedCount}");
 echo "Temizleme tamamlandı. Toplam silinen geçici dosya adedi: {$deletedCount}\n";
+

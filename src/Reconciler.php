@@ -23,11 +23,26 @@ class Reconciler
      *
      * @param string $excelPath
      * @param string|array<string> $pdfPaths
+     * @param string|int $companyId
      * @return ReconciliationResult
      */
-    public function reconcile(string $excelPath, string|array $pdfPaths): ReconciliationResult
+    public function reconcile(string $excelPath, string|array $pdfPaths, string|int $companyId = '1'): ReconciliationResult
     {
-        $terminalBarcodes = $this->excelExtractor->extract($excelPath);
+        $allTerminalBarcodes = $this->excelExtractor->extract($excelPath);
+        
+        $lengthRule = CompanyRules::getLengthRule($companyId);
+        
+        $terminalBarcodes = [];
+        $invalidBarcodes = [];
+        
+        foreach ($allTerminalBarcodes as $barcode) {
+            $len = strlen($barcode);
+            if ($len >= $lengthRule['min'] && $len <= $lengthRule['max']) {
+                $terminalBarcodes[] = $barcode;
+            } else {
+                $invalidBarcodes[] = $barcode;
+            }
+        }
 
         $pdfPaths = (array)$pdfPaths;
         $pdfLines = [];
@@ -169,8 +184,8 @@ class Reconciler
                     continue;
                 }
 
-                // Eğer kelime 12-20 hane arasında geçerli bir barkodsa ekleyelim
-                if ($digits !== null && strlen($digits) >= 12 && strlen($digits) <= 20) {
+                // Eğer kelime geçerli hane kuralları arasında geçerli bir barkodsa ekleyelim
+                if ($digits !== null && strlen($digits) >= $lengthRule['min'] && strlen($digits) <= $lengthRule['max']) {
                     $filteredExtraInStore[] = $digits;
                 }
             }
@@ -191,7 +206,7 @@ class Reconciler
                 
                 // Eğer temizlenen sayı uzunluğu yakınsa ve levenshtein mesafesi <= 2 ise
                 $len = strlen($cleanExtra);
-                if ($len >= 12 && $len <= 22) {
+                if ($len >= $lengthRule['min'] && $len <= $lengthRule['max'] + 2) {
                     $distance = levenshtein($missingBarcode, $cleanExtra);
                     if ($distance > 0 && $distance <= 2) {
                         $suspectedMatches[] = [
@@ -221,7 +236,8 @@ class Reconciler
             array_values($extraInStore),
             $suspectedMatches,
             $matchedOcr,
-            $matchedText
+            $matchedText,
+            $invalidBarcodes
         );
     }
 
