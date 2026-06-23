@@ -421,7 +421,7 @@ if ($dbEnabled) {
                         <p class="timestamp" id="reconciliationTime">İşlem anlık olarak tamamlandı.</p>
                     </div>
                     <div class="action-buttons" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                        <button type="button" class="btn btn-secondary" id="showRawDataBtn" style="background: rgba(37, 99, 235, 0.1); color: var(--secondary); border: 1px solid rgba(37, 99, 235, 0.25);">Ham Barkodları Göster</button>
+                        <button type="button" class="btn btn-secondary" id="showRawDataBtn" style="display: none;">Ham Barkodları Göster</button>
                         <button type="button" class="btn btn-secondary" id="downloadExcelBtn">Excel İndir</button>
                     </div>
                 </div>
