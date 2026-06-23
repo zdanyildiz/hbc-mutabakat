@@ -52,6 +52,15 @@ class Reconciler
                     break;
                 }
             }
+            
+            // Eğer tam olarak bulunamadıysa, satırlar arasında bölünmüş olabileceğini kontrol et (OCR)
+            if (!$found) {
+                if ($this->removeSplitBarcode($terminalBarcode, $pdfLinesPool)) {
+                    $matched[] = $terminalBarcode;
+                    $found = true;
+                }
+            }
+
             if (!$found) {
                 $missingInStore[] = $terminalBarcode;
             }
@@ -82,7 +91,8 @@ class Reconciler
             $charReplaceMap = [
                 'l' => '1', '|' => '1', 'I' => '1', 'ı' => '1', 't' => '1', '!' => '1', 'i' => '1',
                 ']' => '3', 'j' => '3', 'J' => '3',
-                'E' => '8', 'o' => '0'
+                'E' => '8', 'o' => '0', 'O' => '0', 'B' => '8', 'S' => '5', 's' => '5', 'ü' => '4', 
+                '{' => '8', '}' => '1', '[' => '1'
             ];
 
             $stillMissing = [];
@@ -113,6 +123,15 @@ class Reconciler
                         $foundInText = true;
                         \App\Logger::log("[Reconciler-TextSearch] Eksik Barkod Metin Aramasıyla Eşleşti: " . $missingBarcode);
                         break;
+                    }
+                }
+
+                // Eğer metin içinde tam olarak bulunamadıysa, bölünmüş aramayı dene (Metin Fallback)
+                if (!$foundInText) {
+                    if ($this->removeSplitBarcodeText($missingBarcode, $rawPdfLines, $charReplaceMap)) {
+                        $matched[] = $missingBarcode;
+                        $foundInText = true;
+                        \App\Logger::log("[Reconciler-TextSearch] Eksik Barkod Metin Aramasında Bölünmüş Olarak Eşleşti: " . $missingBarcode);
                     }
                 }
 
@@ -168,5 +187,146 @@ class Reconciler
             array_values($extraInStore),
             $suspectedMatches
         );
+    }
+
+    /**
+     * Checks if a barcode is split across two adjacent lines and removes them from the pool.
+     *
+     * @param string $barcode
+     * @param array<string> &$lines Reference to the lines pool
+     * @return bool True if found and matched (and removed from pool), false otherwise.
+     */
+    private function removeSplitBarcode(string $barcode, array &$lines): bool
+    {
+        $len = strlen($barcode);
+        if ($len < 10) {
+            return false;
+        }
+
+        $minPrefixLen = max(10, $len - 4);
+        $maxPrefixLen = $len - 1;
+
+        $keys = array_keys($lines);
+        $keysCount = count($keys);
+
+        for ($prefixLen = $minPrefixLen; $prefixLen <= $maxPrefixLen; $prefixLen++) {
+            $prefix = substr($barcode, 0, $prefixLen);
+            $suffix = substr($barcode, $prefixLen);
+
+            for ($i = 0; $i < $keysCount; $i++) {
+                $currentKey = $keys[$i];
+                if (!isset($lines[$currentKey])) {
+                    continue;
+                }
+
+                $currentLineDigits = preg_replace('/\D/', '', $lines[$currentKey]);
+                if ($currentLineDigits === null || !str_contains($currentLineDigits, $prefix)) {
+                    continue;
+                }
+
+                // Prefix bulundu. Şimdi sonraki 1 veya 2 geçerli satırda suffix'i arayalım
+                for ($k = 1; $k <= 2; $k++) {
+                    if ($i + $k >= $keysCount) {
+                        continue;
+                    }
+
+                    $nextKey = $keys[$i + $k];
+                    if (!isset($lines[$nextKey])) {
+                        continue;
+                    }
+
+                    $nextLineDigits = preg_replace('/\D/', '', $lines[$nextKey]);
+                    if ($nextLineDigits === null) {
+                        continue;
+                    }
+
+                    if (str_contains($nextLineDigits, $suffix)) {
+                        // Hem prefix satırını hem de suffix satırını havuzdan kaldır
+                        unset($lines[$currentKey]);
+                        unset($lines[$nextKey]);
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Checks if a barcode is split across two adjacent text lines and removes them from the pool.
+     *
+     * @param string $barcode
+     * @param array<string> &$lines Reference to the text lines pool
+     * @param array<string, string> $charReplaceMap
+     * @return bool True if found and matched, false otherwise.
+     */
+    private function removeSplitBarcodeText(string $barcode, array &$lines, array $charReplaceMap): bool
+    {
+        $len = strlen($barcode);
+        if ($len < 10) {
+            return false;
+        }
+
+        $minPrefixLen = max(10, $len - 4);
+        $maxPrefixLen = $len - 1;
+
+        $keys = array_keys($lines);
+        $keysCount = count($keys);
+
+        for ($prefixLen = $minPrefixLen; $prefixLen <= $maxPrefixLen; $prefixLen++) {
+            $prefix = substr($barcode, 0, $prefixLen);
+            $suffix = substr($barcode, $prefixLen);
+
+            for ($i = 0; $i < $keysCount; $i++) {
+                $currentKey = $keys[$i];
+                if (!isset($lines[$currentKey])) {
+                    continue;
+                }
+
+                // Satırı temizle ve normalize et
+                $cleanLine = preg_replace('/\s+/u', '', $lines[$currentKey]);
+                if ($cleanLine === null) {
+                    $cleanLine = $lines[$currentKey];
+                }
+                $replacedLine = strtr($cleanLine, $charReplaceMap);
+                $currentLineDigits = preg_replace('/\D/', '', $replacedLine);
+
+                if ($currentLineDigits === null || !str_contains($currentLineDigits, $prefix)) {
+                    continue;
+                }
+
+                // Prefix eşleşti! Sonraki satırlarda suffix'i arayalım
+                for ($k = 1; $k <= 2; $k++) {
+                    if ($i + $k >= $keysCount) {
+                        continue;
+                    }
+
+                    $nextKey = $keys[$i + $k];
+                    if (!isset($lines[$nextKey])) {
+                        continue;
+                    }
+
+                    $nextClean = preg_replace('/\s+/u', '', $lines[$nextKey]);
+                    if ($nextClean === null) {
+                        $nextClean = $lines[$nextKey];
+                    }
+                    $nextReplaced = strtr($nextClean, $charReplaceMap);
+                    $nextLineDigits = preg_replace('/\D/', '', $nextReplaced);
+
+                    if ($nextLineDigits === null) {
+                        continue;
+                    }
+
+                    if (str_contains($nextLineDigits, $suffix)) {
+                        unset($lines[$currentKey]);
+                        unset($lines[$nextKey]);
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 }

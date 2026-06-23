@@ -66,7 +66,7 @@ def ocr_page(img_path: str) -> str:
 
         result = subprocess.run([
             "tesseract", tess_input_path, "stdout",
-            "--psm", "3",
+            "--psm", "6",
             "-l", "tur+eng"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", timeout=30, env=custom_env)
         
@@ -148,8 +148,8 @@ def process_text_to_lines(text: str) -> list:
         # Boşlukları temizle (tüm satırda)
         clean_line = re.sub(r'\s+', '', line_strip)
         
-        # 18 karakterden küçükse es geç
-        if len(clean_line) < 18:
+        # Kısa satırları (örn. alt satıra kayan barkod hanelerini) kaybetmemek için filtreyi gevşetiyoruz
+        if len(clean_line) < 1:
             continue
             
         processed_lines.append(clean_line)
