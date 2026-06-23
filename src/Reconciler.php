@@ -38,7 +38,8 @@ class Reconciler
 
         $pdfLinesPool = array_values($pdfLines);
 
-        $matched = [];
+        $matchedOcr = [];
+        $matchedText = [];
         $missingInStore = [];
 
         // 1. Aşama: Tam Eşleşenler (OCR Taraması ile)
@@ -46,7 +47,7 @@ class Reconciler
             $found = false;
             foreach ($pdfLinesPool as $idx => $pdfLine) {
                 if (str_contains($pdfLine, $terminalBarcode) || str_contains($terminalBarcode, $pdfLine)) {
-                    $matched[] = $terminalBarcode;
+                    $matchedOcr[] = $terminalBarcode;
                     unset($pdfLinesPool[$idx]);
                     $found = true;
                     break;
@@ -56,7 +57,7 @@ class Reconciler
             // Eğer tam olarak bulunamadıysa, satırlar arasında bölünmüş olabileceğini kontrol et (OCR)
             if (!$found) {
                 if ($this->removeSplitBarcode($terminalBarcode, $pdfLinesPool)) {
-                    $matched[] = $terminalBarcode;
+                    $matchedOcr[] = $terminalBarcode;
                     $found = true;
                 }
             }
@@ -117,7 +118,7 @@ class Reconciler
 
                     // Barkod numarasını satırda ara
                     if (str_contains($digitsOnlyLine, $missingBarcode)) {
-                        $matched[] = $missingBarcode;
+                        $matchedText[] = $missingBarcode;
                         // Eşleşme olunca satırı havuzdan sil ve bir sonraki eksik barkoda geç
                         unset($rawPdfLines[$idx]);
                         $foundInText = true;
@@ -129,7 +130,7 @@ class Reconciler
                 // Eğer metin içinde tam olarak bulunamadıysa, bölünmüş aramayı dene (Metin Fallback)
                 if (!$foundInText) {
                     if ($this->removeSplitBarcodeText($missingBarcode, $rawPdfLines, $charReplaceMap)) {
-                        $matched[] = $missingBarcode;
+                        $matchedText[] = $missingBarcode;
                         $foundInText = true;
                         \App\Logger::log("[Reconciler-TextSearch] Eksik Barkod Metin Aramasında Bölünmüş Olarak Eşleşti: " . $missingBarcode);
                     }
@@ -142,7 +143,25 @@ class Reconciler
             $missingInStore = $stillMissing;
         }
 
-        $extraInStore = array_values($pdfLinesPool);
+        $matched = array_merge($matchedOcr, $matchedText);
+
+        // Fazla kolileri filtrele (başlık satırlarını ve barkod olamayacak kısa sayıları eliyoruz)
+        $filteredExtraInStore = [];
+        foreach ($pdfLinesPool as $extraBarcode) {
+            $digits = preg_replace('/\D/', '', $extraBarcode);
+            if ($digits === null || strlen($digits) < 12) {
+                continue; // 12 haneden kısa sayı barındıranlar barkod olamaz
+            }
+
+            // PDF başlık satırlarını ve tabloların kenar başlıklarını filtreliyoruz
+            if (preg_match('/(rapor|magaza|mağaza|mutabakat|belge|tarih|kodu|sira|sıra|teslim|koli|onay|mudur|müdür|sayfa|kargo|firma|depo|irs|sevk|toplam|adedi|alacak)/iu', $extraBarcode)) {
+                continue;
+            }
+
+            $filteredExtraInStore[] = $digits;
+        }
+
+        $extraInStore = array_values(array_unique($filteredExtraInStore));
         $suspectedMatches = [];
         $stillMissingAfterFuzzy = [];
 
@@ -157,7 +176,7 @@ class Reconciler
                 
                 // Eğer temizlenen sayı uzunluğu yakınsa ve levenshtein mesafesi <= 2 ise
                 $len = strlen($cleanExtra);
-                if ($len >= 14 && $len <= 22) {
+                if ($len >= 12 && $len <= 22) {
                     $distance = levenshtein($missingBarcode, $cleanExtra);
                     if ($distance > 0 && $distance <= 2) {
                         $suspectedMatches[] = [
@@ -185,7 +204,9 @@ class Reconciler
             $matched,
             array_values($missingInStore),
             array_values($extraInStore),
-            $suspectedMatches
+            $suspectedMatches,
+            $matchedOcr,
+            $matchedText
         );
     }
 

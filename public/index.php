@@ -434,7 +434,7 @@ if ($dbEnabled) {
                     <div class="stat-box stat-matched">
                         <div class="stat-value" id="statMatchedVal">0</div>
                         <div class="stat-label">Tam Eşleşen Koliler</div>
-                        <div class="stat-desc">Her iki listede de olanlar</div>
+                        <div class="stat-desc" id="statMatchedDesc">Her iki listede de olanlar</div>
                     </div>
                     <div class="stat-box stat-missing">
                         <div class="stat-value" id="statMissingVal">0</div>

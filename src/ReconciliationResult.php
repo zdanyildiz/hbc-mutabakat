@@ -13,6 +13,8 @@ class ReconciliationResult
      * @param array<string> $missingInStore
      * @param array<string> $extraInStore
      * @param array<array{terminal_barcode: string, store_barcode: string, distance: int}> $suspectedMatches
+     * @param array<string> $matchedOcr
+     * @param array<string> $matchedText
      */
     public function __construct(
         public readonly array $terminalBarcodes,
@@ -20,7 +22,9 @@ class ReconciliationResult
         public readonly array $matched,
         public readonly array $missingInStore,
         public readonly array $extraInStore,
-        public readonly array $suspectedMatches = []
+        public readonly array $suspectedMatches = [],
+        public readonly array $matchedOcr = [],
+        public readonly array $matchedText = []
     ) {}
 
     /**
@@ -33,10 +37,14 @@ class ReconciliationResult
      *     missingCount: int,
      *     extraCount: int,
      *     suspectedCount: int,
+     *     matchedOcrCount: int,
+     *     matchedTextCount: int,
      *     matched: array<string>,
      *     missingInStore: array<string>,
      *     extraInStore: array<string>,
      *     suspectedMatches: array<array{terminal_barcode: string, store_barcode: string, distance: int}>,
+     *     matchedOcr: array<string>,
+     *     matchedText: array<string>,
      *     terminalBarcodes: array<string>,
      *     storeBarcodes: array<string>
      * }
@@ -67,10 +75,14 @@ class ReconciliationResult
             'missingCount' => count($this->missingInStore),
             'extraCount' => count($this->extraInStore),
             'suspectedCount' => count($this->suspectedMatches),
+            'matchedOcrCount' => count($this->matchedOcr),
+            'matchedTextCount' => count($this->matchedText),
             'matched' => $this->matched,
             'missingInStore' => $this->missingInStore,
             'extraInStore' => $this->extraInStore,
             'suspectedMatches' => $this->suspectedMatches,
+            'matchedOcr' => $this->matchedOcr,
+            'matchedText' => $this->matchedText,
             'terminalBarcodes' => $terminalBarcodes,
             'storeBarcodes' => $storeBarcodes,
         ];

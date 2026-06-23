@@ -124,7 +124,9 @@ document.addEventListener('DOMContentLoaded', () => {
         pdfMismatches: [],
         suspectedMatches: [],
         terminalBarcodes: [],
-        storeBarcodes: []
+        storeBarcodes: [],
+        matchedOcrCount: 0,
+        matchedTextCount: 0
     };
 
     let activeFilter = 'all';
@@ -181,6 +183,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentData.terminalBarcodes = data.result.terminalBarcodes || [];
                 currentData.storeBarcodes = data.result.storeBarcodes || [];
                 currentData.elapsedTime = data.elapsed_time || null;
+                currentData.matchedOcrCount = data.result.matchedOcrCount || 0;
+                currentData.matchedTextCount = data.result.matchedTextCount || 0;
 
                 renderResults();
                 resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -227,6 +231,11 @@ document.addEventListener('DOMContentLoaded', () => {
         statMissingVal.textContent = misCount;
         statExtraVal.textContent = exCount;
         statSuspectedVal.textContent = susCount;
+
+        const statMatchedDesc = document.getElementById('statMatchedDesc');
+        if (statMatchedDesc) {
+            statMatchedDesc.textContent = `OCR: ${currentData.matchedOcrCount} | Metin: ${currentData.matchedTextCount}`;
+        }
 
         countAll.textContent = mCount + misCount + exCount + susCount;
         countMatched.textContent = mCount;
@@ -500,6 +509,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         currentData.pdfOriginalWords = {}; // clear for past db reports
                         currentData.pdfMismatches = []; // clear for past db reports
                         currentData.suspectedMatches = data.result.suspectedMatches || [];
+                        currentData.matchedOcrCount = data.result.matchedOcrCount || 0;
+                        currentData.matchedTextCount = data.result.matchedTextCount || 0;
                         
                         // terminalBarcodes fallback
                         if (data.result.terminalBarcodes) {
