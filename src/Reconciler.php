@@ -163,6 +163,12 @@ class Reconciler
             foreach ($words as $word) {
                 // Kelimeden sadece rakamları alalım
                 $digits = preg_replace('/\D/', '', $word);
+                
+                // Eğer bu barkod zaten başarıyla eşleştiyse fazla koli olamaz
+                if ($digits !== null && in_array($digits, $matched, true)) {
+                    continue;
+                }
+
                 // Eğer kelime 12-20 hane arasında geçerli bir barkodsa ekleyelim
                 if ($digits !== null && strlen($digits) >= 12 && strlen($digits) <= 20) {
                     $filteredExtraInStore[] = $digits;
