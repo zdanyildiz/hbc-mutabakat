@@ -46,7 +46,8 @@ class Reconciler
         foreach ($terminalBarcodes as $terminalBarcode) {
             $found = false;
             foreach ($pdfLinesPool as $idx => $pdfLine) {
-                if (str_contains($pdfLine, $terminalBarcode) || str_contains($terminalBarcode, $pdfLine)) {
+                $pdfLineClean = preg_replace('/\s+/', '', $pdfLine);
+                if ($pdfLineClean !== null && (str_contains($pdfLineClean, $terminalBarcode) || str_contains($terminalBarcode, $pdfLineClean))) {
                     $matchedOcr[] = $terminalBarcode;
                     unset($pdfLinesPool[$idx]);
                     $found = true;
@@ -145,20 +146,28 @@ class Reconciler
 
         $matched = array_merge($matchedOcr, $matchedText);
 
-        // Fazla kolileri filtrele (başlık satırlarını ve barkod olamayacak kısa sayıları eliyoruz)
+        // Fazla kolileri filtrele (Kalan satırlardaki gerçek barkodları ayıklıyoruz)
         $filteredExtraInStore = [];
-        foreach ($pdfLinesPool as $extraBarcode) {
-            $digits = preg_replace('/\D/', '', $extraBarcode);
-            if ($digits === null || strlen($digits) < 12) {
-                continue; // 12 haneden kısa sayı barındıranlar barkod olamaz
-            }
-
+        foreach ($pdfLinesPool as $extraLine) {
             // PDF başlık satırlarını ve tabloların kenar başlıklarını filtreliyoruz
-            if (preg_match('/(rapor|magaza|mağaza|mutabakat|belge|tarih|kodu|sira|sıra|teslim|koli|onay|mudur|müdür|sayfa|kargo|firma|depo|irs|sevk|toplam|adedi|alacak)/iu', $extraBarcode)) {
+            if (preg_match('/(rapor|magaza|mağaza|mutabakat|belge|tarih|kodu|sira|sıra|teslim|koli|onay|mudur|müdür|sayfa|kargo|firma|depo|irs|sevk|toplam|adedi|alacak)/iu', $extraLine)) {
                 continue;
             }
 
-            $filteredExtraInStore[] = $digits;
+            // Satırı boşluklara göre kelimelere bölüp her bir kelimeyi ayrı ayrı analiz edelim
+            $words = preg_split('/\s+/', $extraLine);
+            if ($words === false) {
+                $words = [$extraLine];
+            }
+
+            foreach ($words as $word) {
+                // Kelimeden sadece rakamları alalım
+                $digits = preg_replace('/\D/', '', $word);
+                // Eğer kelime 12-20 hane arasında geçerli bir barkodsa ekleyelim
+                if ($digits !== null && strlen($digits) >= 12 && strlen($digits) <= 20) {
+                    $filteredExtraInStore[] = $digits;
+                }
+            }
         }
 
         $extraInStore = array_values(array_unique($filteredExtraInStore));

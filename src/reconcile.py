@@ -145,14 +145,7 @@ def process_text_to_lines(text: str) -> list:
         if not line_strip:
             continue
             
-        # Boşlukları temizle (tüm satırda)
-        clean_line = re.sub(r'\s+', '', line_strip)
-        
-        # Kısa satırları (örn. alt satıra kayan barkod hanelerini) kaybetmemek için filtreyi gevşetiyoruz
-        if len(clean_line) < 1:
-            continue
-            
-        processed_lines.append(clean_line)
+        processed_lines.append(line_strip)
         
     return processed_lines
 

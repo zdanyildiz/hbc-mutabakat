@@ -428,15 +428,7 @@ class PdfExtractor
                 continue;
             }
 
-            // Boşlukları temizle (tüm satırda)
-            $cleanLine = (string)preg_replace('/\s+/u', '', $lineStrip);
-
-            // 18 karakterden küçükse es geç
-            if (mb_strlen($cleanLine) < 18) {
-                continue;
-            }
-
-            $processedLines[] = $cleanLine;
+            $processedLines[] = $lineStrip;
         }
 
         return $processedLines;
