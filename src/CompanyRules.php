@@ -20,7 +20,11 @@ class CompanyRules
     public static function getLengthRule(string|int|null $companyId): array
     {
         if ($companyId !== null && (string)$companyId === '1') {
-            return ['min' => 18, 'max' => 18, 'prefixes' => ['15', '16']];
+            // NOT: Ön ek kuralı şimdilik devre dışı. Gerçek LCW verisinde 18 haneli
+            // barkodların ~%28'i "61/71/79/92" gibi farklı önekle başlıyor (sadece 15/16 değil),
+            // bu yüzden "15/16" zorunluluğu gerçek eşleşmeleri yanlışlıkla "Hatalı" yapıyordu.
+            // Doğru önek spesifikasyonu netleşince 'prefixes' tekrar doldurulabilir.
+            return ['min' => 18, 'max' => 18, 'prefixes' => []];
         }
         return ['min' => 12, 'max' => 20, 'prefixes' => []];
     }
