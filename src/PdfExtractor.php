@@ -140,7 +140,58 @@ class PdfExtractor
         }
 
         $lines = explode("\n", $text);
-        
+
+        $filename = basename($filePath, '.pdf');
+        $storeCodeDigits = '';
+        if (preg_match('/\d+/', $filename, $matches)) {
+            $storeCodeDigits = $matches[0];
+        }
+
+        if ($storeCodeDigits !== '') {
+            $codePattern = '';
+            for ($i = 0; $i < strlen($storeCodeDigits); $i++) {
+                $char = $storeCodeDigits[$i];
+                if ($char === '0') {
+                    $codePattern .= '[0oO]';
+                } else {
+                    $codePattern .= $char;
+                }
+            }
+
+            $regex = '/(?:[Tt1lIı]|)\s*' . $codePattern . '\s*[-_:]+\s*(.+)/i';
+            
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if (preg_match($regex, $line, $matches)) {
+                    $name = trim($matches[1]);
+                    if (strlen($name) > 3) {
+                        $name = strtr($name, [
+                            '|s' => 'IS',
+                            '|S' => 'IS',
+                            '|' => 'I',
+                        ]);
+                        return $filename . ' - ' . $name;
+                    }
+                }
+            }
+
+            $fallbackRegex = '/(?:[Tt1lIı]|)\s*' . $codePattern . '\b\s*(.+)/i';
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if (preg_match($fallbackRegex, $line, $matches)) {
+                    $name = trim($matches[1]);
+                    if (strlen($name) > 3 && !preg_match('/(mutabakat|tarih|belge|numara|rapor)/iu', $name)) {
+                        $name = strtr($name, [
+                            '|s' => 'IS',
+                            '|S' => 'IS',
+                            '|' => 'I',
+                        ]);
+                        return $filename . ' - ' . $name;
+                    }
+                }
+            }
+        }
+
         $foundStoreLabel = false;
         foreach ($lines as $line) {
             $line = trim($line);
@@ -158,16 +209,20 @@ class PdfExtractor
                     'o' => '0',
                     'O' => '0',
                     'l' => '1',
+                    '|s' => 'IS',
+                    '|S' => 'IS',
+                    '|' => 'I',
                 ]);
-                return $cleanedStore;
+                if (strlen($cleanedStore) > 3 && !preg_match('/^[^\w\s]+$/', $cleanedStore)) {
+                    return $cleanedStore;
+                }
             }
 
-            if (mb_stripos($line, 'Mağaza') !== false) {
+            if (mb_stripos($line, 'Mağaza') !== false && mb_stripos($line, 'Müdür') === false && mb_stripos($line, 'Müd') === false) {
                 $foundStoreLabel = true;
             }
         }
 
-        $filename = basename($filePath, '.pdf');
         if (preg_match('/^T\d+$/i', $filename)) {
             return strtoupper($filename);
         }
