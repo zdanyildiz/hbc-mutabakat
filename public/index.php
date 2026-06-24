@@ -121,9 +121,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         $excelMap = $excelExtractor->extractMap($excelPath);
         $barcodeStores = $excelMap;
         foreach ($pdfPaths as $path) {
-            $pdfStoreName = $pdfExtractor->extractStoreName($path);
-            $pdfBarcodes = $pdfExtractor->extract($path);
-            foreach ($pdfBarcodes as $barcode) {
+            // Her PDF barkodunu (sadece rakam) kendi mağaza adına eşle. Böylece "Fazla Koliler"
+            // satırları (yalnızca PDF'te bulunan barkodlar) doğru mağaza adını gösterir.
+            $pdfMap = $pdfExtractor->extractBarcodeStoreMap($path);
+            foreach ($pdfMap as $barcode => $pdfStoreName) {
                 if (!isset($barcodeStores[$barcode])) {
                     $barcodeStores[$barcode] = $pdfStoreName;
                 }
@@ -474,7 +475,7 @@ if ($dbEnabled) {
                     <div class="stat-box stat-invalid">
                         <div class="stat-value" id="statInvalidVal">0</div>
                         <div class="stat-label">Hatalı Barkodlar</div>
-                        <div class="stat-desc">Uzunluk kuralına uymayanlar</div>
+                        <div class="stat-desc">Uzunluk/ön ek kuralına uymayanlar</div>
                     </div>
                 </div>
 

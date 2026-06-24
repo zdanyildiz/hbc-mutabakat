@@ -46,8 +46,9 @@ class Reconciler
         $invalidBarcodes = [];
 
         foreach ($allTerminalBarcodes as $barcode) {
-            $len = strlen($barcode);
-            if ($len >= $lengthRule['min'] && $len <= $lengthRule['max']) {
+            // Hane (uzunluk) kuralının yanı sıra firmaya özel ön ek kuralı da uygulanır.
+            // LCW için: 18 haneli VE "15" ya da "16" ile başlamalı.
+            if (CompanyRules::isValid($barcode, $companyId)) {
                 $terminalBarcodes[] = $barcode;
             } else {
                 $invalidBarcodes[] = $barcode;

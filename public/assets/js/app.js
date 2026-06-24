@@ -290,6 +290,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Hatalı (Invalid) Barkodlar (Mor)
         currentData.invalidBarcodes.forEach(barcode => {
+            const lengthOk = barcode.length === 18;
+            const prefixOk = barcode.startsWith('15') || barcode.startsWith('16');
+            let reason;
+            if (!lengthOk && !prefixOk) {
+                reason = `Excel'de bulunan bu barkod 18 hane ve "15"/"16" ile başlama kuralına uymuyor (Uzunluk: ${barcode.length}, Başlangıç: ${barcode.substring(0, 2)}).`;
+            } else if (!lengthOk) {
+                reason = `Excel'de bulunan bu barkod 18 hane kuralına uymuyor (Uzunluk: ${barcode.length}).`;
+            } else {
+                reason = `Excel'de bulunan bu barkod "15" veya "16" ile başlamalı (Başlangıç: ${barcode.substring(0, 2)}).`;
+            }
             allRows.push({
                 type: 'invalid',
                 barcode: barcode,
@@ -298,9 +308,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 html: `<tr class="row-invalid" data-type="invalid">
                     <td class="font-semibold" style="color: #8b5cf6;">${escapeHtml(barcode)}</td>
                     <td class="text-muted">-</td>
-                    <td style="color: #8b5cf6; font-weight: 500;">LCW (Hatalı Uzunluk)</td>
+                    <td style="color: #8b5cf6; font-weight: 500;">LCW (Hatalı Barkod)</td>
                     <td><span class="badge badge-invalid">Hatalı</span></td>
-                    <td style="color: #8b5cf6; font-size: 0.85rem;">Excel'de bulunan bu barkod 18 hane kuralına uymuyor (Uzunluk: ${barcode.length}).</td>
+                    <td style="color: #8b5cf6; font-size: 0.85rem;">${escapeHtml(reason)}</td>
                 </tr>`
             });
         });

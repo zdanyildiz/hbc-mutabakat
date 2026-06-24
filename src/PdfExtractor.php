@@ -231,6 +231,48 @@ class PdfExtractor
     }
 
     /**
+     * Builds a map of cleaned barcode (digits only) => store name for a single PDF.
+     *
+     * The store name is resolved once per PDF via {@see extractStoreName()}. Each PDF line
+     * is then split into words and the digit-only candidate of each word (matching the same
+     * per-word logic the Reconciler uses to detect "extra" barcodes) is mapped to that store.
+     * This is what lets the "Fazla Koliler" (extra) rows display the correct store, since those
+     * barcodes only exist in the PDF and never in the Excel/terminal list.
+     *
+     * @param string $filePath
+     * @return array<string, string> Cleaned barcode => store name.
+     */
+    public function extractBarcodeStoreMap(string $filePath): array
+    {
+        $storeName = $this->extractStoreName($filePath);
+        $lines = $this->extract($filePath);
+
+        $map = [];
+        foreach ($lines as $line) {
+            $words = preg_split('/\s+/', trim($line));
+            if ($words === false) {
+                $words = [$line];
+            }
+
+            foreach ($words as $word) {
+                $digits = preg_replace('/\D/', '', $word);
+                if (!is_string($digits)) {
+                    continue;
+                }
+                $len = strlen($digits);
+                if ($len < 10 || $len > 25) {
+                    continue;
+                }
+                if (!isset($map[$digits])) {
+                    $map[$digits] = $storeName;
+                }
+            }
+        }
+
+        return $map;
+    }
+
+    /**
      * Tries to extract barcodes using the Python backend.
      * Returns null if Python is not available or fails, allowing PHP fallback.
      *
