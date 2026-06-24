@@ -64,10 +64,17 @@ def ocr_page(img_path: str) -> str:
             tess_input_path = img_path
             clean_img_path = None
 
+        # Barkod okuma: Tesseract'i SADECE rakam (0-9) cikti verecek sekilde kisitliyoruz.
+        # Eslestirme yalnizca rakamlara bakar ve magaza adi dosya adindan gelir; bu yuzden
+        # metni rakamla sinirlamak, belirsiz glifleri (O->0, l->1, S->5) okuma aninda dogru
+        # rakama zorlar -- sonradan karakter haritasiyla duzeltmekten cok daha guvenilir.
+        # Bosluk/satir yapisi korunur (whitelist sadece karakter tanimayi kisitlar), boylece
+        # boluunmus barkod tespiti calismaya devam eder.
         result = subprocess.run([
             "tesseract", tess_input_path, "stdout",
             "--psm", "6",
-            "-l", "tur+eng"
+            "-l", "tur+eng",
+            "-c", "tessedit_char_whitelist=0123456789"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", timeout=30, env=custom_env)
         
         # Cleanup pre-processed image
