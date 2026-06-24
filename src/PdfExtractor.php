@@ -19,7 +19,8 @@ class PdfExtractor
 
     private bool $useOcr = true;
 
-
+    /** Maximum seconds to wait for the Python subprocess before terminating it. */
+    private const PYTHON_TIMEOUT_SECONDS = 300;
 
     public function setUseOcr(bool $useOcr): void
     {
@@ -190,15 +191,54 @@ class PdfExtractor
         }
 
         $pythonExecutable = 'python3';
-        // Check python3 availability
-        $checkCommand = PHP_OS_FAMILY === 'Windows' ? 'where python3' : 'which python3';
-        $hasPython3 = (string)shell_exec($checkCommand);
-        if (trim($hasPython3) === '') {
+        if (PHP_OS_FAMILY === 'Windows') {
             $pythonExecutable = 'python';
+        } else {
+            // Check python3 availability on Unix
+            $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
+            if (trim($hasPython3) === '') {
+                $pythonExecutable = 'python';
+            }
         }
 
         $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
 
+        $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live');
+        if ($result === null) {
+            \App\Logger::log("[PdfExtractor-Python] HATA: Süreç başlatılamadı.");
+            return null;
+        }
+
+        if ($result['timed_out']) {
+            \App\Logger::log("[PdfExtractor-Python] HATA: İşlem " . self::PYTHON_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
+            return null;
+        }
+
+        $data = json_decode(trim($result['stdout']), true);
+        if (is_array($data) && isset($data['success']) && $data['success'] === true) {
+            $this->barcodeToOriginalMap = [];
+            $this->mismatches = [];
+
+            $timeLog = isset($data['elapsed_time']) ? "Süre: {$data['elapsed_time']} sn" : "";
+            \App\Logger::log("[PdfExtractor-Python] Başarıyla tamamlandı - Mod: {$mode} | {$timeLog}");
+
+            return $data['lines'] ?? [];
+        }
+
+        \App\Logger::log("[PdfExtractor-Python] Hata veya uyumsuz çıktı: " . trim(substr($result['stdout'], 0, 200)));
+        return null;
+    }
+
+    /**
+     * Runs a shell command via proc_open, streaming stdout/stderr non-blockingly,
+     * and enforcing an overall timeout to avoid hanging indefinitely on a stuck subprocess.
+     *
+     * @param string $cmd
+     * @param string $liveLogPrefix Log tag used for lines containing "OCR_PROGRESS:"
+     * @return array{stdout: string, stderr: string, timed_out: bool}|null Null if the process could not be started.
+     */
+    private function runProcessWithTimeout(string $cmd, string $liveLogPrefix): ?array
+    {
         $descriptorspec = [
             0 => ["pipe", "r"], // stdin
             1 => ["pipe", "w"], // stdout
@@ -206,18 +246,17 @@ class PdfExtractor
         ];
 
         $process = proc_open($cmd, $descriptorspec, $pipes);
-
         if (!is_resource($process)) {
-            \App\Logger::log("[PdfExtractor-Python] HATA: Süreç başlatılamadı.");
             return null;
         }
 
-        // Set non-blocking mode for stdout and stderr
         stream_set_blocking($pipes[1], false);
         stream_set_blocking($pipes[2], false);
 
         $stdoutData = '';
         $stderrData = '';
+        $timedOut = false;
+        $startTime = microtime(true);
 
         while (true) {
             $read = [$pipes[1], $pipes[2]];
@@ -252,9 +291,9 @@ class PdfExtractor
                                 if ($line !== '') {
                                     if (str_contains($line, 'OCR_PROGRESS:')) {
                                         $cleanLog = str_replace('OCR_PROGRESS:', '', $line);
-                                        \App\Logger::log("[PdfExtractor-Python-Live]" . $cleanLog);
+                                        \App\Logger::log("[{$liveLogPrefix}]" . $cleanLog);
                                     } else {
-                                        \App\Logger::log("[PdfExtractor-Python-Stderr] " . $line);
+                                        \App\Logger::log("[{$liveLogPrefix}-Stderr] " . $line);
                                     }
                                 }
                             }
@@ -275,6 +314,12 @@ class PdfExtractor
                 break;
             }
 
+            if ((microtime(true) - $startTime) > self::PYTHON_TIMEOUT_SECONDS) {
+                $timedOut = true;
+                proc_terminate($process, 9);
+                break;
+            }
+
             if ($numChanged === 0 && !$hasRead) {
                 usleep(10000); // 10ms CPU sleep
             }
@@ -285,19 +330,7 @@ class PdfExtractor
         fclose($pipes[2]);
         proc_close($process);
 
-        $data = json_decode(trim($stdoutData), true);
-        if (is_array($data) && isset($data['success']) && $data['success'] === true) {
-            $this->barcodeToOriginalMap = [];
-            $this->mismatches = [];
-            
-            $timeLog = isset($data['elapsed_time']) ? "Süre: {$data['elapsed_time']} sn" : "";
-            \App\Logger::log("[PdfExtractor-Python] Başarıyla tamamlandı - Mod: {$mode} | {$timeLog}");
-            
-            return $data['lines'] ?? [];
-        }
-
-        \App\Logger::log("[PdfExtractor-Python] Hata veya uyumsuz çıktı: " . trim(substr($stdoutData, 0, 200)));
-        return null;
+        return ['stdout' => $stdoutData, 'stderr' => $stderrData, 'timed_out' => $timedOut];
     }
 
     /**
@@ -319,7 +352,7 @@ class PdfExtractor
         $images = [];
         $tempDir = dirname(__DIR__) . '/var/tmp';
         if (!is_dir($tempDir)) {
-            mkdir($tempDir, 0777, true);
+            mkdir($tempDir, 0750, true);
         }
 
         try {
@@ -459,88 +492,15 @@ class PdfExtractor
             }
 
             $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --raw --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
-            
-            $descriptorspec = [
-                0 => ["pipe", "r"], // stdin
-                1 => ["pipe", "w"], // stdout
-                2 => ["pipe", "w"]  // stderr
-            ];
 
-            $process = proc_open($cmd, $descriptorspec, $pipes);
-            if (is_resource($process)) {
-                stream_set_blocking($pipes[1], false);
-                stream_set_blocking($pipes[2], false);
-
-                $stdoutData = '';
-                $stderrData = '';
-
-                while (true) {
-                    $read = [$pipes[1], $pipes[2]];
-                    $write = null;
-                    $except = null;
-                    $numChanged = stream_select($read, $write, $except, 0, 200000);
-
-                    if ($numChanged === false) {
-                        break;
-                    }
-
-                    $hasRead = false;
-                    if ($numChanged > 0) {
-                        foreach ($read as $stream) {
-                            if ($stream === $pipes[1]) {
-                                $chunk = fread($pipes[1], 8192);
-                                if ($chunk !== false && $chunk !== '') {
-                                    $stdoutData .= $chunk;
-                                    $hasRead = true;
-                                }
-                            } elseif ($stream === $pipes[2]) {
-                                $chunk = fread($pipes[2], 8192);
-                                if ($chunk !== false && $chunk !== '') {
-                                    $stderrData .= $chunk;
-                                    $hasRead = true;
-                                    
-                                    $lines = explode("\n", $chunk);
-                                    foreach ($lines as $line) {
-                                        $line = trim($line);
-                                        if ($line !== '') {
-                                            if (str_contains($line, 'OCR_PROGRESS:')) {
-                                                $cleanLog = str_replace('OCR_PROGRESS:', '', $line);
-                                                \App\Logger::log("[PdfExtractor-Python-Live-Raw]" . $cleanLog);
-                                            } else {
-                                                \App\Logger::log("[PdfExtractor-Python-Stderr-Raw] " . $line);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    $status = proc_get_status($process);
-                    if (!$status['running']) {
-                        while (($chunk = fread($pipes[1], 8192)) !== '' && $chunk !== false) {
-                            $stdoutData .= $chunk;
-                        }
-                        while (($chunk = fread($pipes[2], 8192)) !== '' && $chunk !== false) {
-                            $stderrData .= $chunk;
-                        }
-                        break;
-                    }
-
-                    if ($numChanged === 0 && !$hasRead) {
-                        usleep(10000);
-                    }
-                }
-
-                fclose($pipes[0]);
-                fclose($pipes[1]);
-                fclose($pipes[2]);
-                proc_close($process);
-
-                $data = json_decode(trim($stdoutData), true);
+            $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live-Raw');
+            if ($result !== null && !$result['timed_out']) {
+                $data = json_decode(trim($result['stdout']), true);
                 if (is_array($data) && isset($data['success']) && $data['success'] === true) {
                     return $data['raw_text'] ?? '';
                 }
+            } elseif ($result !== null && $result['timed_out']) {
+                \App\Logger::log("[PdfExtractor-Python-Raw] HATA: İşlem " . self::PYTHON_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
             }
         }
 

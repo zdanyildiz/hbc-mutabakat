@@ -159,6 +159,46 @@ class Reconciler
             $missingInStore = $stillMissing;
         }
 
+        // 3. Aşama: Hala eksik kalan barkodlar arasında, PDF satırındaki OCR gürültüsü
+        // (harf/sembol) nedeniyle 1. ve 2. aşamadaki ham metin karşılaştırmalarını
+        // atlamış olabilecek TAM eşleşmeleri tespit et. Bu adım, "fazla koli" taramasından
+        // önce çalışmalıdır; aksi halde aynı barkod hem eksik hem fazla listesinde görünür.
+        if (!empty($missingInStore)) {
+            $rawPdfLinesForExact = [];
+            foreach ($pdfPaths as $pdfPath) {
+                try {
+                    $rawText = $this->pdfExtractor->extractRawText($pdfPath, 'text');
+                    $lines = explode("\n", str_replace("\r", "", str_replace("\f", "\n", $rawText)));
+                    foreach ($lines as $line) {
+                        $trimmed = trim($line);
+                        if ($trimmed !== '') {
+                            $rawPdfLinesForExact[] = $trimmed;
+                        }
+                    }
+                } catch (\Exception $e) {
+                    // Ham metin alınamazsa bu aşama atlanır, sonraki aşamalar yine de çalışır.
+                }
+            }
+
+            $stillMissingAfterExact = [];
+            foreach ($missingInStore as $missingBarcode) {
+                $exactFound = false;
+                foreach ($rawPdfLinesForExact as $rawLine) {
+                    $digitsOnly = preg_replace('/\D/', '', $rawLine);
+                    if ($digitsOnly !== null && $digitsOnly === $missingBarcode) {
+                        $matchedText[] = $missingBarcode;
+                        $exactFound = true;
+                        \App\Logger::log("[Reconciler-ExactNoise] OCR Gürültüsü Temizlenince Tam Eşleşti: " . $missingBarcode);
+                        break;
+                    }
+                }
+                if (!$exactFound) {
+                    $stillMissingAfterExact[] = $missingBarcode;
+                }
+            }
+            $missingInStore = $stillMissingAfterExact;
+        }
+
         $matched = array_merge($matchedOcr, $matchedText);
 
         // Fazla kolileri filtrele (Kalan satırlardaki gerçek barkodları ayıklıyoruz)
@@ -208,6 +248,16 @@ class Reconciler
                 $len = strlen($cleanExtra);
                 if ($len >= $lengthRule['min'] && $len <= $lengthRule['max'] + 2) {
                     $distance = levenshtein($missingBarcode, $cleanExtra);
+                    if ($distance === 0) {
+                        // Tam eşleşme: "şüpheli" değil, kesin eşleşmedir. Aynı barkodun
+                        // hem eksik hem fazla listesinde aynı anda görünmesini engeller.
+                        $matchedText[] = $missingBarcode;
+                        $matched[] = $missingBarcode;
+                        unset($extraInStore[$idx]);
+                        $fuzzyFound = true;
+                        \App\Logger::log("[Reconciler-Fuzzy] Tam Eşleşme (Mesafe 0) Bulundu: " . $missingBarcode);
+                        break;
+                    }
                     if ($distance > 0 && $distance <= 2) {
                         $suspectedMatches[] = [
                             'terminal_barcode' => $missingBarcode,
