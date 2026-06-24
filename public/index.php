@@ -475,7 +475,7 @@ if ($dbEnabled) {
                     <div class="stat-box stat-invalid">
                         <div class="stat-value" id="statInvalidVal">0</div>
                         <div class="stat-label">Hatalı Barkodlar</div>
-                        <div class="stat-desc">Uzunluk/ön ek kuralına uymayanlar</div>
+                        <div class="stat-desc">Uzunluk kuralına uymayanlar</div>
                     </div>
                 </div>
 

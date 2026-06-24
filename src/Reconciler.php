@@ -81,7 +81,22 @@ class Reconciler
             $found = false;
             foreach ($pdfLinesPool as $idx => $pdfLine) {
                 $pdfLineClean = preg_replace('/\s+/', '', $pdfLine);
-                if ($pdfLineClean !== null && (str_contains($pdfLineClean, $terminalBarcode) || str_contains($terminalBarcode, $pdfLineClean))) {
+                if ($pdfLineClean === null || $pdfLineClean === '') {
+                    continue;
+                }
+
+                // İleri yön: barkod, PDF satırının içinde geçiyor (normal eşleşme).
+                $contains = str_contains($pdfLineClean, $terminalBarcode);
+
+                // Geri yön: PDF satırının tamamı barkodun bir parçası (bölünmüş/kısmi okuma).
+                // SADECE rakamdan oluşan ve >= 6 haneli parçalarla sınırlı; aksi halde
+                // "474" gibi sayfa/sıra numaraları barkodun içinde geçtiği için yanlışlıkla
+                // eşleşip gerçek bir eksik/fazla koliyi gizleyebiliyordu.
+                $isPartial = strlen($pdfLineClean) >= 6
+                    && ctype_digit($pdfLineClean)
+                    && str_contains($terminalBarcode, $pdfLineClean);
+
+                if ($contains || $isPartial) {
                     $matchedOcr[] = $terminalBarcode;
                     unset($pdfLinesPool[$idx]);
                     $found = true;
