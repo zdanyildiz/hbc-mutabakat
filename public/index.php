@@ -44,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
     
     $startTime = microtime(true);
     \App\Logger::log("----------------------------------------------------------------");
-    \App\Logger::log("MUTABAKAT BAŞLADI - Plaka/Mağaza: " . ($_POST['store_name'] ?? 'Belirtilmemiş'));
+    \App\Logger::log("MUTABAKAT BAŞLADI - Plaka/Mağaza: " . ($_POST['store_name'] ?? 'Belirtilmemiş') . " | Mağaza Filtresi: " . ((isset($_POST['filter_by_store']) && $_POST['filter_by_store'] !== '0') ? 'Aktif' : 'Pasif'));
     
     try {
         if (!isset($_FILES['excel_file']) || !isset($_FILES['pdf_file'])) {
@@ -61,6 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         }
 
         $pdfPaths = [];
+        $pdfOriginalFilenames = [];
         if (is_array($pdfFile['error'])) {
             foreach ($pdfFile['error'] as $key => $error) {
                 if ($error !== UPLOAD_ERR_OK) {
@@ -74,6 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
                     continue;
                 }
                 $pdfPaths[] = $pdfFile['tmp_name'][$key];
+                $pdfOriginalFilenames[$pdfFile['tmp_name'][$key]] = $origName;
             }
         } else {
             if ($pdfFile['error'] !== UPLOAD_ERR_OK) {
@@ -86,6 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
                 \App\Logger::log("[Upload] PDF olmayan dosya es geçildi: " . $origName);
             } else {
                 $pdfPaths[] = $pdfFile['tmp_name'];
+                $pdfOriginalFilenames[$pdfFile['tmp_name']] = $origName;
             }
         }
 
@@ -110,8 +113,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         }
 
         $companyId = trim((string)($_POST['company_id'] ?? '1'));
+        $filterByStore = isset($_POST['filter_by_store']) && $_POST['filter_by_store'] !== '0';
 
-        $result = $reconciler->reconcile($excelPath, $pdfPaths, $companyId);
+        $result = $reconciler->reconcile($excelPath, $pdfPaths, $companyId, $filterByStore, $pdfOriginalFilenames);
 
         // Generate barcode to store mapping
         $excelMap = $excelExtractor->extractMap($excelPath);
@@ -382,6 +386,12 @@ if ($dbEnabled) {
                         </div>
                     </div>
 
+                    <div class="form-group" style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                        <input type="checkbox" id="filter_by_store" name="filter_by_store" value="1" checked style="width: auto; cursor: pointer;">
+                        <label for="filter_by_store" style="margin: 0; cursor: pointer;" title="PDF içindeki rota manifestosunda geçen başka mağazalara ait satırları 'fazla koli' sayımından hariç tutar.">
+                            Mağazaya göre filtrele <span class="optional-text">(PDF'teki diğer mağaza satırlarını yok say)</span>
+                        </label>
+                    </div>
 
                     <div class="dropzones-container">
                         <!-- Left Dropzone: Excel/CSV -->
