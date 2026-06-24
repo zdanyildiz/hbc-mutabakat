@@ -122,10 +122,12 @@ class PdfExtractor
     /**
      * Extracts store name from PDF file.
      *
-     * @param string $filePath
+     * @param string $filePath PDF içeriğinin okunacağı (yüklemede geçici) dosya yolu.
+     * @param string|null $originalName Orijinal dosya adı (örn. "T410.pdf"). Mağaza kodunu
+     *     buradan alırız; aksi halde sunucudaki "phpXXXX" geçici adı mağaza adına sızar.
      * @return string
      */
-    public function extractStoreName(string $filePath): string
+    public function extractStoreName(string $filePath, ?string $originalName = null): string
     {
         if (!file_exists($filePath)) {
             return 'Bilinmeyen Mağaza';
@@ -141,7 +143,7 @@ class PdfExtractor
 
         $lines = explode("\n", $text);
 
-        $filename = basename($filePath, '.pdf');
+        $filename = basename($originalName ?? $filePath, '.pdf');
         $storeCodeDigits = '';
         if (preg_match('/\d+/', $filename, $matches)) {
             $storeCodeDigits = $matches[0];
@@ -240,11 +242,13 @@ class PdfExtractor
      * barcodes only exist in the PDF and never in the Excel/terminal list.
      *
      * @param string $filePath
+     * @param string|null $originalName Orijinal dosya adı (örn. "T410.pdf"); mağaza adının
+     *     geçici "phpXXXX" dosya adından türememesi için {@see extractStoreName()}'e geçilir.
      * @return array<string, string> Cleaned barcode => store name.
      */
-    public function extractBarcodeStoreMap(string $filePath): array
+    public function extractBarcodeStoreMap(string $filePath, ?string $originalName = null): array
     {
-        $storeName = $this->extractStoreName($filePath);
+        $storeName = $this->extractStoreName($filePath, $originalName);
         $lines = $this->extract($filePath);
 
         $map = [];

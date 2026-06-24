@@ -122,7 +122,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         foreach ($pdfPaths as $path) {
             // Her PDF barkodunu (sadece rakam) kendi mağaza adına eşle. Böylece "Fazla Koliler"
             // satırları (yalnızca PDF'te bulunan barkodlar) doğru mağaza adını gösterir.
-            $pdfMap = $pdfExtractor->extractBarcodeStoreMap($path);
+            // Orijinal dosya adını (T410.pdf) geçiyoruz; aksi halde "phpXXXX" geçici adı sızar.
+            $pdfMap = $pdfExtractor->extractBarcodeStoreMap($path, $pdfOriginalFilenames[$path] ?? null);
             foreach ($pdfMap as $barcode => $pdfStoreName) {
                 if (!isset($barcodeStores[$barcode])) {
                     $barcodeStores[$barcode] = $pdfStoreName;
