@@ -215,19 +215,39 @@ class Reconciler
                 $words = [$extraLine];
             }
 
+            // Bir satırda birden fazla barkod hanesi geçebilir (örn. "Barkod" ve
+            // "Müşteri Barkod" sütunları aynı satırda yan yana basılı, ya da aynı
+            // barkod satırda 2 kez yazılı). Bir paket = bir satır olduğu için, bu
+            // satırdan zaten eşleşmiş bir barkod çıkıyorsa satırın tamamı yok sayılır;
+            // aksi halde satırdan en fazla TEK bir barkod adayı alınır.
+            $lineMatchedAlready = false;
+            $lineCandidate = null;
+
             foreach ($words as $word) {
                 // Kelimeden sadece rakamları alalım
                 $digits = preg_replace('/\D/', '', $word);
-                
-                // Eğer bu barkod zaten başarıyla eşleştiyse fazla koli olamaz
-                if ($digits !== null && in_array($digits, $matched, true)) {
+
+                if ($digits === null || $digits === '') {
                     continue;
                 }
 
-                // Eğer kelime geçerli hane kuralları arasında geçerli bir barkodsa ekleyelim
-                if ($digits !== null && strlen($digits) >= $lengthRule['min'] && strlen($digits) <= $lengthRule['max']) {
-                    $filteredExtraInStore[] = $digits;
+                // Eğer bu satırdaki barkodlardan biri zaten başarıyla eşleştiyse,
+                // satırdaki diğer (yanlış okunmuş veya tekrar yazılmış) barkod
+                // adayı tamamen yok sayılır.
+                if (in_array($digits, $matched, true)) {
+                    $lineMatchedAlready = true;
+                    break;
                 }
+
+                // Eğer kelime geçerli hane kuralları arasında geçerli bir barkodsa,
+                // satırın ilk geçerli adayı olarak not edelim (satırdan en fazla 1 tane alınır).
+                if ($lineCandidate === null && strlen($digits) >= $lengthRule['min'] && strlen($digits) <= $lengthRule['max']) {
+                    $lineCandidate = $digits;
+                }
+            }
+
+            if (!$lineMatchedAlready && $lineCandidate !== null) {
+                $filteredExtraInStore[] = $lineCandidate;
             }
         }
 
