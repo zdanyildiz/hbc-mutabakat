@@ -24,19 +24,12 @@ class Reconciler
      * @param string $excelPath
      * @param string|array<string> $pdfPaths
      * @param string|int $companyId
-     * @param bool $filterByStore Mağaza rota manifestolarında geçen BAŞKA mağazalara ait
-     *     satırları (örn. T410.pdf içinde T503, T405 gibi farklı mağaza kodlu satırlar)
-     *     "fazla koli" taramasına dahil etmemek için satırları kendi mağaza koduna göre filtreler.
-     * @param array<string, string> $pdfOriginalFilenames Geçici dosya yolu => orijinal dosya adı eşlemesi.
-     *     Mağaza kodu tespiti için kullanılır (örn. "T410.pdf"). Verilmezse $pdfPaths'in kendisi kullanılır.
      * @return ReconciliationResult
      */
     public function reconcile(
         string $excelPath,
         string|array $pdfPaths,
-        string|int $companyId = '1',
-        bool $filterByStore = true,
-        array $pdfOriginalFilenames = []
+        string|int $companyId = '1'
     ): ReconciliationResult {
         $allTerminalBarcodes = $this->excelExtractor->extract($excelPath);
 
@@ -46,8 +39,9 @@ class Reconciler
         $invalidBarcodes = [];
 
         foreach ($allTerminalBarcodes as $barcode) {
-            // Hane (uzunluk) kuralının yanı sıra firmaya özel ön ek kuralı da uygulanır.
-            // LCW için: 18 haneli VE "15" ya da "16" ile başlamalı.
+            // Terminal barkod geçerliliği SADECE uzunluk kuralıyla belirlenir (ön ek değil).
+            // Böylece "9..." ile başlayan sarf malzeme kodları geçerli sayılır ve PDF'te
+            // karşılığı olmadığı için doğru şekilde "Eksik" listesinde görünür.
             if (CompanyRules::isValid($barcode, $companyId)) {
                 $terminalBarcodes[] = $barcode;
             } else {
@@ -59,14 +53,6 @@ class Reconciler
         $pdfLines = [];
         foreach ($pdfPaths as $pdfPath) {
             $extracted = $this->pdfExtractor->extract($pdfPath);
-
-            if ($filterByStore) {
-                $ownStoreCode = $this->inferOwnStoreCode($pdfPath, $pdfOriginalFilenames[$pdfPath] ?? null);
-                if ($ownStoreCode !== null) {
-                    $extracted = $this->filterLinesByOwnStore($extracted, $ownStoreCode);
-                }
-            }
-
             $pdfLines = array_merge($pdfLines, $extracted);
         }
 
@@ -273,9 +259,14 @@ class Reconciler
                     break;
                 }
 
-                // Eğer kelime geçerli hane kuralları arasında geçerli bir barkodsa,
-                // satırın ilk geçerli adayı olarak not edelim (satırdan en fazla 1 tane alınır).
-                if ($lineCandidate === null && strlen($digits) >= $lengthRule['min'] && strlen($digits) <= $lengthRule['max']) {
+                // Eğer kelime geçerli hane kuralları arasında VE firmanın geçerli ön ekiyle
+                // başlayan bir barkodsa, satırın ilk geçerli adayı olarak not edelim (satırdan
+                // en fazla 1 tane alınır). Ön ek filtresi (LCW: 15/16) OCR gürültüsünden gelen,
+                // gerçek LCW barkodu olmayan 18 haneli dizilerin "fazla koli" sayılmasını engeller.
+                if ($lineCandidate === null
+                    && strlen($digits) >= $lengthRule['min']
+                    && strlen($digits) <= $lengthRule['max']
+                    && CompanyRules::hasValidPrefix($digits, $companyId)) {
                     $lineCandidate = $digits;
                 }
             }
@@ -343,59 +334,6 @@ class Reconciler
             $matchedText,
             $invalidBarcodes
         );
-    }
-
-    /**
-     * Infers the store code (e.g. "T410") that a PDF's own manifest section belongs to,
-     * so that other stores' rows printed in the same route manifest can be filtered out.
-     *
-     * @param string $pdfPath
-     * @param string|null $originalFilename Original (non-temp) filename, if known.
-     * @return string|null Uppercased store code, or null if it could not be determined.
-     */
-    private function inferOwnStoreCode(string $pdfPath, ?string $originalFilename): ?string
-    {
-        $candidateName = $originalFilename ?? $pdfPath;
-        $filename = basename($candidateName, '.pdf');
-        if (preg_match('/^T\d{3,4}$/i', $filename)) {
-            return strtoupper($filename);
-        }
-
-        try {
-            $storeName = $this->pdfExtractor->extractStoreName($pdfPath);
-        } catch (\Exception $e) {
-            return null;
-        }
-
-        if (preg_match('/\bT\d{3,4}\b/i', $storeName, $m)) {
-            return strtoupper($m[0]);
-        }
-
-        return null;
-    }
-
-    /**
-     * Drops PDF lines that reference a different store's code (e.g. "T503") than the
-     * PDF's own store, while keeping lines that mention the own code or no store code at all
-     * (continuation/split-barcode lines without a trailing store column).
-     *
-     * @param array<string> $lines
-     * @param string $ownStoreCode
-     * @return array<string>
-     */
-    private function filterLinesByOwnStore(array $lines, string $ownStoreCode): array
-    {
-        $filtered = [];
-        foreach ($lines as $line) {
-            preg_match_all('/\bT\d{3,4}\b/i', $line, $matches);
-            $codesInLine = array_map('strtoupper', $matches[0]);
-
-            if (empty($codesInLine) || in_array($ownStoreCode, $codesInLine, true)) {
-                $filtered[] = $line;
-            }
-        }
-
-        return $filtered;
     }
 
     /**
