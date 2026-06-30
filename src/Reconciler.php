@@ -6,7 +6,32 @@ namespace App;
 
 class Reconciler
 {
+    /** Bilinen glif (rakam) karışmasının ağırlıklı maliyeti. */
+    private const SOFT_COST = 0.3;
 
+    /** Şüpheli eşleşme için izin verilen toplam ağırlıklı hata bütçesi (gerçek hatalar ağırlıklı). */
+    private const SUSPECT_COST_BUDGET = 2.0;
+
+    /** Tüm farkların glif karışması olduğu durumda kabul edilen en fazla karışma sayısı. */
+    private const MAX_SOFT_GLYPH = 4;
+
+    /**
+     * Görsel olarak benzer, OCR'ın sık karıştırdığı rakam çiftleri. Çift yönlü
+     * değerlendirilir (8↔6 hem 8→6 hem 6→8). Digit-only OCR çıktısında geriye kalan
+     * tipik hataları "muhtemel okuma hatası" (ucuz) olarak işaretlemek için kullanılır.
+     *
+     * @var array<int, array{0: string, 1: string}>
+     */
+    private const GLYPH_CONFUSIONS = [
+        ['8', '6'], ['8', '0'], ['8', '3'], ['8', '9'], ['8', '5'],
+        ['6', '0'], ['6', '5'],
+        ['0', '9'],
+        ['1', '7'], ['1', '2'],
+        ['5', '9'],
+        ['3', '9'],
+        ['9', '4'],
+        ['2', '7'],
+    ];
 
     public function __construct(
         private readonly ExcelExtractor $excelExtractor,
@@ -16,10 +41,11 @@ class Reconciler
     /**
      * Reconciles barcodes between an Excel/CSV file and one or more PDF files.
      *
-     * Uses a three-tier matching strategy:
-     * 1. Exact match (with leading-zero normalization)
-     * 2. Fuzzy match via Levenshtein distance (≤ threshold → suspected match)
-     * 3. No match → missing/extra
+     * Uses a multi-tier matching strategy:
+     * 1. Exact match (OCR + split-line recovery)
+     * 2. Text-layer search fallback (broken font CMap normalized)
+     * 3. Glyph-weighted anchored fuzzy match (1:1) → matched / suspected
+     * 4. No match → missing/extra
      *
      * @param string $excelPath
      * @param string|array<string> $pdfPaths
@@ -280,44 +306,88 @@ class Reconciler
         $suspectedMatches = [];
         $stillMissingAfterFuzzy = [];
 
+        // Glif-ağırlıklı kenetli (1:1) eşleştirme.
+        //
+        // Digit-only OCR sonrası geriye kalan hatalar harf→rakam değil, görsel olarak
+        // benzeyen RAKAM→RAKAM karışmalarıdır (8→6, 1→7, 5→6 ...). Düz Levenshtein bunu
+        // "gerçek farklı barkod"tan ayıramaz: 3 belirsiz hane düz mesafede 3 eder ve
+        // reddedilir. Bunun yerine her hane farkını bilinen karışma tablosuna göre "ucuz"
+        // (glif/soft) veya "gerçek" (hard) diye sınıflandırıp eşiği gerçek hata bütçesi
+        // üzerinden koyarız. Terminal listesi kapalı küme olduğundan ve her PDF adayını
+        // yalnızca tek bir barkoda kenetlediğimizden (1:1), bu yanlış pozitif üretmeden
+        // recall'ı artırır; aynı barkodun hem eksik hem fazla görünmesini de engeller.
         foreach ($missingInStore as $missingBarcode) {
-            $fuzzyFound = false;
+            $bestIdx = null;
+            $bestClass = '';            // 'match' (kesin) | 'suspect' (şüpheli)
+            $bestHard = PHP_INT_MAX;
+            $bestCost = INF;
+            $bestDiff = 0;
+            $bestStore = '';
+
             foreach ($extraInStore as $idx => $extraBarcode) {
-                // PDF'teki fazla satırı sadece sayılar kalacak şekilde temizle
                 $cleanExtra = preg_replace('/\D/', '', $extraBarcode);
                 if (!is_string($cleanExtra) || $cleanExtra === '') {
                     $cleanExtra = $extraBarcode;
                 }
-                
-                // Eğer temizlenen sayı uzunluğu yakınsa ve levenshtein mesafesi <= 2 ise
+
                 $len = strlen($cleanExtra);
-                if ($len >= $lengthRule['min'] && $len <= $lengthRule['max'] + 2) {
-                    $distance = levenshtein($missingBarcode, $cleanExtra);
-                    if ($distance === 0) {
-                        // Tam eşleşme: "şüpheli" değil, kesin eşleşmedir. Aynı barkodun
-                        // hem eksik hem fazla listesinde aynı anda görünmesini engeller.
-                        $matchedText[] = $missingBarcode;
-                        $matched[] = $missingBarcode;
-                        unset($extraInStore[$idx]);
-                        $fuzzyFound = true;
-                        \App\Logger::log("[Reconciler-Fuzzy] Tam Eşleşme (Mesafe 0) Bulundu: " . $missingBarcode);
-                        break;
-                    }
-                    if ($distance > 0 && $distance <= 2) {
-                        $suspectedMatches[] = [
-                            'terminal_barcode' => $missingBarcode,
-                            'store_barcode' => $cleanExtra,
-                            'distance' => $distance
-                        ];
-                        unset($extraInStore[$idx]);
-                        $fuzzyFound = true;
-                        \App\Logger::log("[Reconciler-Fuzzy] Şüpheli Eşleşme Bulundu: " . $missingBarcode . " <-> " . $cleanExtra . " (Mesafe: " . $distance . ")");
-                        break;
-                    }
+                if ($len < $lengthRule['min'] || $len > $lengthRule['max'] + 2) {
+                    continue;
+                }
+
+                $cmp = $this->glyphCompare($missingBarcode, $cleanExtra);
+                if ($cmp === null) {
+                    // Uzunluklar farklı (düşmüş/eklenmiş hane): düz Levenshtein'a düşeriz;
+                    // glif kredisi verilmez, tüm fark "gerçek hata" sayılır.
+                    $dist = levenshtein($missingBarcode, $cleanExtra);
+                    $cmp = ['diff' => $dist, 'hard' => $dist, 'soft' => 0, 'cost' => (float)$dist];
+                }
+
+                $class = '';
+                if ($cmp['diff'] === 0) {
+                    // Birebir (önceki aşamalar OCR gürültüsü yüzünden atlamış olabilir).
+                    $class = 'match';
+                } elseif ($cmp['hard'] === 0 && $cmp['soft'] <= self::MAX_SOFT_GLYPH) {
+                    // Tüm farklar bilinen glif karışması → güçlü şüpheli eşleşme (asıl kazanç).
+                    $class = 'suspect';
+                } elseif ($cmp['hard'] >= 1 && $cmp['cost'] <= self::SUSPECT_COST_BUDGET) {
+                    // Az sayıda gerçek hata + olası glif → şüpheli eşleşme.
+                    $class = 'suspect';
+                } else {
+                    continue; // eşik dışı
+                }
+
+                // En iyi adayı seç: önce en az gerçek hata, sonra en düşük ağırlıklı maliyet.
+                if ($cmp['hard'] < $bestHard
+                    || ($cmp['hard'] === $bestHard && $cmp['cost'] < $bestCost)) {
+                    $bestIdx = $idx;
+                    $bestClass = $class;
+                    $bestHard = $cmp['hard'];
+                    $bestCost = $cmp['cost'];
+                    $bestDiff = $cmp['diff'];
+                    $bestStore = $cleanExtra;
                 }
             }
-            if (!$fuzzyFound) {
+
+            if ($bestIdx === null) {
                 $stillMissingAfterFuzzy[] = $missingBarcode;
+                continue;
+            }
+
+            // 1:1 kenetleme: seçilen aday havuzdan düşer.
+            unset($extraInStore[$bestIdx]);
+
+            if ($bestClass === 'match') {
+                $matchedText[] = $missingBarcode;
+                $matched[] = $missingBarcode;
+                \App\Logger::log("[Reconciler-Fuzzy] Tam Eşleşme (Mesafe 0) Bulundu: " . $missingBarcode);
+            } else {
+                $suspectedMatches[] = [
+                    'terminal_barcode' => $missingBarcode,
+                    'store_barcode' => $bestStore,
+                    'distance' => $bestDiff,
+                ];
+                \App\Logger::log("[Reconciler-Fuzzy] Şüpheli Eşleşme Bulundu: " . $missingBarcode . " <-> " . $bestStore . " (Hane farkı: " . $bestDiff . " | Gerçek hata: " . $bestHard . ")");
             }
         }
         $missingInStore = $stillMissingAfterFuzzy;
@@ -471,6 +541,59 @@ class Reconciler
                         return true;
                     }
                 }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * İki eşit uzunluktaki rakam dizisini hane hane karşılaştırır ve farkları,
+     * bilinen glif karışma tablosuna göre "ucuz" (soft) veya "gerçek" (hard) olarak
+     * sınıflandırır. Uzunluklar eşit değilse null döner (çağıran tarafça düz
+     * Levenshtein'a düşülür).
+     *
+     * @return array{diff: int, hard: int, soft: int, cost: float}|null
+     */
+    private function glyphCompare(string $a, string $b): ?array
+    {
+        if (strlen($a) !== strlen($b)) {
+            return null;
+        }
+
+        $hard = 0;
+        $soft = 0;
+        $len = strlen($a);
+
+        for ($i = 0; $i < $len; $i++) {
+            if ($a[$i] === $b[$i]) {
+                continue;
+            }
+
+            if ($this->isConfusableDigit($a[$i], $b[$i])) {
+                $soft++;
+            } else {
+                $hard++;
+            }
+        }
+
+        return [
+            'diff' => $hard + $soft,
+            'hard' => $hard,
+            'soft' => $soft,
+            'cost' => $hard * 1.0 + $soft * self::SOFT_COST,
+        ];
+    }
+
+    /**
+     * İki rakamın, OCR'ın görsel olarak karıştırabileceği bir çift olup olmadığını
+     * kontrol eder (çift yönlü).
+     */
+    private function isConfusableDigit(string $a, string $b): bool
+    {
+        foreach (self::GLYPH_CONFUSIONS as $pair) {
+            if (($pair[0] === $a && $pair[1] === $b) || ($pair[0] === $b && $pair[1] === $a)) {
+                return true;
             }
         }
 
