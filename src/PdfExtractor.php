@@ -17,10 +17,21 @@ class PdfExtractor
      */
     private array $mismatches = [];
 
+    /**
+     * Son extract() çağrısının satır meta verileri (Python TSV çıktısından).
+     * Dönen satır listesiyle aynı sırada ve aynı uzunluktadır; meta üretilemediyse boştur.
+     *
+     * @var array<int, array{conf: float|null, alts: array<string>}>
+     */
+    private array $lastLineMeta = [];
+
     private bool $useOcr = true;
 
     /** Maximum seconds to wait for the Python subprocess before terminating it. */
     private const PYTHON_TIMEOUT_SECONDS = 300;
+
+    /** OCR sonuç önbelleğinin saklandığı dizin (PDF içeriği sha1 anahtarıyla). */
+    private const CACHE_SUBDIR = '/var/cache';
 
     public function setUseOcr(bool $useOcr): void
     {
@@ -53,6 +64,18 @@ class PdfExtractor
     }
 
     /**
+     * Son extract() çağrısının satır meta verilerini döner (satırlarla aynı sıra/uzunluk).
+     * "alts": aynı satırın ikinci geçiş/hakem motorundan gelen alternatif okumaları;
+     * "conf": Tesseract'ın satırdaki en düşük kelime güveni (0-100, bilinmiyorsa null).
+     *
+     * @return array<int, array{conf: float|null, alts: array<string>}>
+     */
+    public function getLastLineMeta(): array
+    {
+        return $this->lastLineMeta;
+    }
+
+    /**
      * Extracts barcode/tracking numbers from a PDF file.
      *
      * @param string $filePath
@@ -64,6 +87,9 @@ class PdfExtractor
         if (!file_exists($filePath)) {
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
+
+        // PHP fallback yollarında meta üretilmez; bayat meta sızmasın diye baştan sıfırla.
+        $this->lastLineMeta = [];
 
         // Try Python extraction first
         $mode = $this->useOcr ? 'ocr' : 'text';
@@ -291,18 +317,20 @@ class PdfExtractor
             return null;
         }
 
-        $pythonExecutable = 'python3';
-        if (PHP_OS_FAMILY === 'Windows') {
-            $pythonExecutable = 'python';
-        } else {
-            // Check python3 availability on Unix
-            $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
-            if (trim($hasPython3) === '') {
-                $pythonExecutable = 'python';
-            }
+        // Önbellek: aynı PDF (içerik hash'i) daha önce aynı modda okunduysa Python'u
+        // hiç çalıştırma. extractBarcodeStoreMap() aynı PDF'i ikinci kez okuduğu için
+        // bu, tek mutabakat isteği içinde bile OCR süresini yarıya indirir.
+        $cacheFile = $this->getCacheFilePath($filePath, $mode, false);
+        $cached = $this->readCache($cacheFile);
+        if ($cached !== null) {
+            \App\Logger::log("[PdfExtractor-Python] Önbellekten okundu - Mod: {$mode} | " . basename($filePath));
+            $this->barcodeToOriginalMap = [];
+            $this->mismatches = [];
+            $this->lastLineMeta = $this->parseLineMeta($cached);
+            return $cached['lines'] ?? [];
         }
 
-        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
+        $cmd = $this->buildPythonCommand($pythonScript, $mode, $filePath, false);
 
         $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live');
         if ($result === null) {
@@ -319,15 +347,133 @@ class PdfExtractor
         if (is_array($data) && isset($data['success']) && $data['success'] === true) {
             $this->barcodeToOriginalMap = [];
             $this->mismatches = [];
+            $this->lastLineMeta = $this->parseLineMeta($data);
 
             $timeLog = isset($data['elapsed_time']) ? "Süre: {$data['elapsed_time']} sn" : "";
             \App\Logger::log("[PdfExtractor-Python] Başarıyla tamamlandı - Mod: {$mode} | {$timeLog}");
+
+            $this->writeCache($cacheFile, $data);
 
             return $data['lines'] ?? [];
         }
 
         \App\Logger::log("[PdfExtractor-Python] Hata veya uyumsuz çıktı: " . trim(substr($result['stdout'], 0, 200)));
         return null;
+    }
+
+    /**
+     * Python komutunu oluşturur. Linux'ta OCR, web isteklerini ve aynı sunucudaki
+     * pozitif-photo uygulamasını boğmasın diye düşük CPU önceliğiyle (nice) çalıştırılır.
+     */
+    private function buildPythonCommand(string $pythonScript, string $mode, string $filePath, bool $raw): string
+    {
+        $pythonExecutable = 'python3';
+        if (PHP_OS_FAMILY === 'Windows') {
+            $pythonExecutable = 'python';
+        } else {
+            $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
+            if (trim($hasPython3) === '') {
+                $pythonExecutable = 'python';
+            }
+        }
+
+        $prefix = PHP_OS_FAMILY === 'Windows' ? '' : 'nice -n 10 ';
+        $rawFlag = $raw ? ' --raw' : '';
+
+        return $prefix . $pythonExecutable . ' ' . escapeshellarg($pythonScript)
+            . $rawFlag . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
+    }
+
+    /**
+     * Python çıktısındaki lines_meta alanını doğrulayıp normalize eder.
+     * Satır sayısıyla uyuşmuyorsa (eski script, bozuk çıktı) boş döner.
+     *
+     * @param array<string, mixed> $data
+     * @return array<int, array{conf: float|null, alts: array<string>}>
+     */
+    private function parseLineMeta(array $data): array
+    {
+        $lines = $data['lines'] ?? null;
+        $meta = $data['lines_meta'] ?? null;
+        if (!is_array($lines) || !is_array($meta) || count($meta) !== count($lines)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach (array_values($meta) as $entry) {
+            $conf = null;
+            $alts = [];
+            if (is_array($entry)) {
+                if (isset($entry['conf']) && is_numeric($entry['conf'])) {
+                    $conf = (float)$entry['conf'];
+                }
+                if (isset($entry['alts']) && is_array($entry['alts'])) {
+                    foreach ($entry['alts'] as $alt) {
+                        if (is_string($alt) && $alt !== '') {
+                            $alts[] = $alt;
+                        }
+                    }
+                }
+            }
+            $normalized[] = ['conf' => $conf, 'alts' => $alts];
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Önbellek dosya yolunu üretir. Anahtar; PDF içeriği, mod ve script sürümünden
+     * (mtime) oluşur — script her güncellendiğinde eski önbellek doğal olarak düşer.
+     */
+    private function getCacheFilePath(string $filePath, string $mode, bool $raw): ?string
+    {
+        $hash = @sha1_file($filePath);
+        if ($hash === false) {
+            return null;
+        }
+
+        $cacheDir = dirname(__DIR__) . self::CACHE_SUBDIR;
+        if (!is_dir($cacheDir) && !@mkdir($cacheDir, 0750, true) && !is_dir($cacheDir)) {
+            return null;
+        }
+
+        $scriptVersion = (string)@filemtime(dirname(__DIR__) . '/src/reconcile.py');
+
+        return $cacheDir . '/ocr_' . $hash . '_' . $mode . ($raw ? '_raw' : '') . '_'
+            . substr(sha1($scriptVersion), 0, 8) . '.json';
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function readCache(?string $cacheFile): ?array
+    {
+        if ($cacheFile === null || !is_file($cacheFile)) {
+            return null;
+        }
+        $content = @file_get_contents($cacheFile);
+        if ($content === false) {
+            return null;
+        }
+        $data = json_decode($content, true);
+        if (!is_array($data) || !isset($data['success']) || $data['success'] !== true) {
+            return null;
+        }
+        return $data;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function writeCache(?string $cacheFile, array $data): void
+    {
+        if ($cacheFile === null) {
+            return;
+        }
+        $json = json_encode($data, JSON_UNESCAPED_UNICODE);
+        if ($json !== false) {
+            @file_put_contents($cacheFile, $json, LOCK_EX);
+        }
     }
 
     /**
@@ -585,19 +731,20 @@ class PdfExtractor
         // Try Python extraction first with --raw flag
         $pythonScript = dirname(__DIR__) . '/src/reconcile.py';
         if (file_exists($pythonScript)) {
-            $pythonExecutable = 'python3';
-            $checkCommand = PHP_OS_FAMILY === 'Windows' ? 'where python3' : 'which python3';
-            $hasPython3 = (string)shell_exec($checkCommand);
-            if (trim($hasPython3) === '') {
-                $pythonExecutable = 'python';
+            $cacheFile = $this->getCacheFilePath($filePath, $mode, true);
+            $cached = $this->readCache($cacheFile);
+            if ($cached !== null && isset($cached['raw_text']) && is_string($cached['raw_text'])) {
+                \App\Logger::log("[PdfExtractor-Python-Raw] Önbellekten okundu - Mod: {$mode} | " . basename($filePath));
+                return $cached['raw_text'];
             }
 
-            $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --raw --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
+            $cmd = $this->buildPythonCommand($pythonScript, $mode, $filePath, true);
 
             $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live-Raw');
             if ($result !== null && !$result['timed_out']) {
                 $data = json_decode(trim($result['stdout']), true);
                 if (is_array($data) && isset($data['success']) && $data['success'] === true) {
+                    $this->writeCache($cacheFile, $data);
                     return $data['raw_text'] ?? '';
                 }
             } elseif ($result !== null && $result['timed_out']) {

@@ -16,6 +16,14 @@ class Reconciler
     private const MAX_SOFT_GLYPH = 4;
 
     /**
+     * Bu güvenin (Tesseract kelime güveni, 0-100) üzerindeki PDF satırları "doğru
+     * okunmuş" kabul edilir: böyle bir satırdan gelen aday, eksik barkoddan gerçek
+     * (glif-dışı) hanelerle ayrışıyorsa şüpheli eşleşme olarak ÖNERİLMEZ — büyük
+     * ihtimalle gerçekten farklı bir kolidir.
+     */
+    private const TRUSTED_CONF = 95.0;
+
+    /**
      * Görsel olarak benzer, OCR'ın sık karıştırdığı rakam çiftleri. Çift yönlü
      * değerlendirilir (8↔6 hem 8→6 hem 6→8). Digit-only OCR çıktısında geriye kalan
      * tipik hataları "muhtemel okuma hatası" (ucuz) olarak işaretlemek için kullanılır.
@@ -42,9 +50,9 @@ class Reconciler
      * Reconciles barcodes between an Excel/CSV file and one or more PDF files.
      *
      * Uses a multi-tier matching strategy:
-     * 1. Exact match (OCR + split-line recovery)
+     * 1. Exact match (OCR primary + alternative readings + split-line recovery)
      * 2. Text-layer search fallback (broken font CMap normalized)
-     * 3. Glyph-weighted anchored fuzzy match (1:1) → matched / suspected
+     * 3. Glyph-weighted anchored fuzzy match (1:1, OCR confidence aware) → matched / suspected
      * 4. No match → missing/extra
      *
      * @param string $excelPath
@@ -77,42 +85,63 @@ class Reconciler
 
         $pdfPaths = (array)$pdfPaths;
         $pdfLines = [];
+        $pdfLineMeta = [];
         foreach ($pdfPaths as $pdfPath) {
             $extracted = $this->pdfExtractor->extract($pdfPath);
+            // Satır meta verileri (güven skoru + alternatif okumalar) satır listesiyle
+            // aynı hizada tutulur; motor meta üretememişse nötr değerlerle doldurulur.
+            $meta = $this->pdfExtractor->getLastLineMeta();
+            if (count($meta) !== count($extracted)) {
+                $meta = array_fill(0, count($extracted), ['conf' => null, 'alts' => []]);
+            }
             $pdfLines = array_merge($pdfLines, $extracted);
+            $pdfLineMeta = array_merge($pdfLineMeta, $meta);
         }
 
         $pdfLinesPool = array_values($pdfLines);
+        $poolMeta = array_values($pdfLineMeta);
 
         $matchedOcr = [];
         $matchedText = [];
         $missingInStore = [];
 
         // 1. Aşama: Tam Eşleşenler (OCR Taraması ile)
+        // Her satır için hem birincil okuma hem de ikinci geçiş / hakem motorundan
+        // gelen alternatif okumalar (varyantlar) denenir: ana geçiş bir haneyi yanlış
+        // okusa bile, kırpılmış psm7 veya RapidOCR okuması doğruysa satır eşleşir.
         foreach ($terminalBarcodes as $terminalBarcode) {
             $found = false;
             foreach ($pdfLinesPool as $idx => $pdfLine) {
-                $pdfLineClean = preg_replace('/\s+/', '', $pdfLine);
-                if ($pdfLineClean === null || $pdfLineClean === '') {
-                    continue;
+                $variants = [$pdfLine];
+                if (isset($poolMeta[$idx]['alts'])) {
+                    foreach ($poolMeta[$idx]['alts'] as $altReading) {
+                        $variants[] = $altReading;
+                    }
                 }
 
-                // İleri yön: barkod, PDF satırının içinde geçiyor (normal eşleşme).
-                $contains = str_contains($pdfLineClean, $terminalBarcode);
+                foreach ($variants as $variant) {
+                    $pdfLineClean = preg_replace('/\s+/', '', $variant);
+                    if ($pdfLineClean === null || $pdfLineClean === '') {
+                        continue;
+                    }
 
-                // Geri yön: PDF satırının tamamı barkodun bir parçası (bölünmüş/kısmi okuma).
-                // SADECE rakamdan oluşan ve >= 6 haneli parçalarla sınırlı; aksi halde
-                // "474" gibi sayfa/sıra numaraları barkodun içinde geçtiği için yanlışlıkla
-                // eşleşip gerçek bir eksik/fazla koliyi gizleyebiliyordu.
-                $isPartial = strlen($pdfLineClean) >= 6
-                    && ctype_digit($pdfLineClean)
-                    && str_contains($terminalBarcode, $pdfLineClean);
+                    // İleri yön: barkod, PDF satırının içinde geçiyor (normal eşleşme).
+                    $contains = str_contains($pdfLineClean, $terminalBarcode);
 
-                if ($contains || $isPartial) {
-                    $matchedOcr[] = $terminalBarcode;
-                    unset($pdfLinesPool[$idx]);
-                    $found = true;
-                    break;
+                    // Geri yön: PDF satırının tamamı barkodun bir parçası (bölünmüş/kısmi okuma).
+                    // SADECE rakamdan oluşan ve >= 6 haneli parçalarla sınırlı; aksi halde
+                    // "474" gibi sayfa/sıra numaraları barkodun içinde geçtiği için yanlışlıkla
+                    // eşleşip gerçek bir eksik/fazla koliyi gizleyebiliyordu.
+                    $isPartial = strlen($pdfLineClean) >= 6
+                        && ctype_digit($pdfLineClean)
+                        && str_contains($terminalBarcode, $pdfLineClean);
+
+                    if ($contains || $isPartial) {
+                        $matchedOcr[] = $terminalBarcode;
+                        unset($pdfLinesPool[$idx]);
+                        $found = true;
+                        break 2;
+                    }
                 }
             }
             
@@ -249,7 +278,9 @@ class Reconciler
 
         // Fazla kolileri filtrele (Kalan satırlardaki gerçek barkodları ayıklıyoruz)
         $filteredExtraInStore = [];
-        foreach ($pdfLinesPool as $extraLine) {
+        // Aday barkod => kaynak satırın OCR güven skoru (fuzzy aşamasında kullanılır).
+        $extraConfMap = [];
+        foreach ($pdfLinesPool as $poolIdx => $extraLine) {
             // PDF başlık satırlarını ve tabloların kenar başlıklarını filtreliyoruz
             if (preg_match('/(rapor|magaza|mağaza|mutabakat|belge|tarih|kodu|sira|sıra|teslim|koli|onay|mudur|müdür|sayfa|kargo|firma|depo|irs|sevk|toplam|adedi|alacak)/iu', $extraLine)) {
                 continue;
@@ -299,6 +330,9 @@ class Reconciler
 
             if (!$lineMatchedAlready && $lineCandidate !== null) {
                 $filteredExtraInStore[] = $lineCandidate;
+                if (!isset($extraConfMap[$lineCandidate]) && isset($poolMeta[$poolIdx]['conf'])) {
+                    $extraConfMap[$lineCandidate] = $poolMeta[$poolIdx]['conf'];
+                }
             }
         }
 
@@ -351,7 +385,13 @@ class Reconciler
                     // Tüm farklar bilinen glif karışması → güçlü şüpheli eşleşme (asıl kazanç).
                     $class = 'suspect';
                 } elseif ($cmp['hard'] >= 1 && $cmp['cost'] <= self::SUSPECT_COST_BUDGET) {
-                    // Az sayıda gerçek hata + olası glif → şüpheli eşleşme.
+                    // Az sayıda gerçek hata + olası glif → şüpheli eşleşme. Ancak kaynak
+                    // satır yüksek güvenle okunmuşsa (iki OCR geçişi teyitli), gerçek hane
+                    // hatası "yanlış okuma" değil "gerçekten farklı koli" demektir.
+                    $sourceConf = $extraConfMap[$extraBarcode] ?? null;
+                    if ($sourceConf !== null && $sourceConf >= self::TRUSTED_CONF) {
+                        continue;
+                    }
                     $class = 'suspect';
                 } else {
                     continue; // eşik dışı

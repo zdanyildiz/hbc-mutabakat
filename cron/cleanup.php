@@ -47,6 +47,26 @@ foreach ($targetDirs as $dir) {
     }
 }
 
+// OCR sonuç önbelleği temizliği: aynı PDF kısa aralıklarla tekrar yüklendiği için
+// 7 gün saklanır (uploads/tmp'deki 24 saatlik agresif temizlikten ayrı tutulur).
+$cacheDir = $baseDir . '/var/cache';
+$cacheTimeLimit = time() - (7 * 24 * 3600);
+$deletedCacheCount = 0;
+if (is_dir($cacheDir)) {
+    $cacheFiles = glob($cacheDir . '/ocr_*.json');
+    foreach ($cacheFiles !== false ? $cacheFiles : [] as $cacheFile) {
+        $mtime = @filemtime($cacheFile);
+        if ($mtime !== false && $mtime < $cacheTimeLimit) {
+            if (@unlink($cacheFile)) {
+                $deletedCacheCount++;
+            }
+        }
+    }
+}
+if ($deletedCacheCount > 0) {
+    Logger::log("[Cron-Cleanup] OCR önbelleğinden {$deletedCacheCount} eski kayıt silindi.");
+}
+
 // Log dosyası temizleme (Log Rotation) işlemi
 $logFile = $baseDir . '/var/logs/app.log';
 if (is_file($logFile)) {

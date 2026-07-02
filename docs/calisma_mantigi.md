@@ -50,10 +50,11 @@ graph TD
 > [!IMPORTANT]
 > **Python Eşleştirme Yapmaz!** Python scriptinin tek görevi, PDF dosyasını alıp içindeki yazıları OCR ile okuyarak satır satır ham metin halinde PHP'ye teslim etmektir. Excel barkodlarıyla hiçbir bağı kurmaz veya karşılaştırma yapmaz.
 
-* **Görsel Dönüşümü:** PDF sayfalarını `pdftoppm` aracı ile yüksek çözünürlüklü (300 DPI) PNG resimlerine dönüştürür.
-* **Tesseract Okuması:** Tesseract OCR motorunu tetikleyerek resimlerdeki yazıları okur. Tablo satır takibini optimize etmek için **`--psm 6`** modu kullanılır.
-* **Filtreleme:** Satırlardaki anlamsız boşluklar temizlenir. Alt satırlara kayabilecek kısa barkod parçalarını kaybetmemek için minimum uzunluk filtresi 1 karaktere indirilmiştir.
-* Kalan temizlenmiş **ham satır listesini** JSON formatında PHP'ye geri döndürür.
+* **Kayıpsız Görüntü Edinimi:** Taranmış PDF'lerde gömülü orijinal tarama görüntüsü `pdfimages` ile doğrudan çıkarılır (yeniden örnekleme bulanıklığı oluşmaz). Sayfa döndürülmüşse veya PDF dijital ise `pdftoppm` (300 DPI) ile render'a düşülür.
+* **Akıllı Ön İşleme:** 1-bit (siyah/beyaz faks modu) taramalar tespit edilir ve kenar yumuşatma uygulanır; gri/renkli taramalarda kontrast + keskinleştirme yapılır. Tüm sayfalara eğrilik düzeltme (deskew) uygulanır.
+* **TSV Okuması (Koordinat + Güven):** Tesseract **`--psm 6`** ve rakam whitelist'i ile **TSV modunda** çalıştırılır; her kelimenin konumu ve güven skoru alınır, satırlar koordinatlarla kurulur.
+* **Hedefli İkinci Geçiş:** Düşük güvenli (conf < 88) barkod satırları kırpılıp 3x büyütülerek tek satır modunda (**`--psm 7`**) yeniden okunur. Farklı okunan satırların ikinci okuması **alternatif okuma** olarak eklenir; kuruluysa **RapidOCR** hakem motoru üçüncü bağımsız okumayı üretir.
+* Satır listesi + satır başına meta (`conf`, `alts`) JSON formatında PHP'ye geri döndürülür.
 
 ### 5. Eşleştirme Motoru: Eşleştirici (`src/Reconciler.php`)
 > [!NOTE]
@@ -61,7 +62,7 @@ graph TD
 
 * **1. Aşama (OCR Eşleme & Bölünmüş Satır Kurtarma):**
   * Excel'den okunan her barkodu alır.
-  * Python'dan gelen OCR satır listesinde bu barkodun geçip geçmediğini kontrol eder.
+  * Python'dan gelen OCR satır listesinde bu barkodun geçip geçmediğini kontrol eder. Her satır için hem birincil okuma hem de ikinci geçiş / RapidOCR'dan gelen **alternatif okumalar** denenir.
   * **Akıllı Kurtarma (OCR):** Eğer tam eşleşme bulunamazsa, barkodun bölünüp bölünmediği kontrol edilir. Barkodun ilk kısmı (prefix) bir satırda, son haneleri (suffix, 1-4 karakter) hemen ardındaki satırlarda yer alıyorsa bu iki parça birleştirilerek barkod kurtarılır ve satırlar havuzdan silinir.
   * Başarıyla eşleşen barkodlar **"Eşleşti (Yeşil)"** listesine eklenir. Bulunamazsa geçici olarak **"Eksik (Kırmızı)"** listesine yazılır.
 
@@ -72,7 +73,13 @@ graph TD
   * **Akıllı Kurtarma (Metin):** Metin katmanındaki CMap encoding ve tablo yapısı nedeniyle bölünmüş barkodlar bölünmüş arama mantığıyla kurtarılır.
   * Eğer bu düzeltilmiş ve kurtarılmış satır içinde eksik barkod bulunursa, onu eksik listesinden çıkarıp **"Eşleşti (Yeşil)"** listesine taşır.
 
+* **3. Aşama (Glif-Ağırlıklı Fuzzy, Güvene Duyarlı):**
+  * Hâlâ eksik görünen barkodlar, "fazla" adaylarıyla glif karışma tablosu üzerinden 1:1 eşlenir.
+  * Kaynak satır yüksek güvenle (conf >= 95) okunmuşsa ve fark gerçek (glif-dışı) hane hatası içeriyorsa aday **şüpheli olarak önerilmez** — büyük ihtimalle gerçekten farklı bir kolidir.
+
 * **Sonuç Belirleme:**
   * Excel'de olup PDF'te hiçbir şekilde bulunamayanlar: **Eksik (Kırmızı)**
   * PDF'te okunup Excel'de karşılığı olmayanlar: **Fazla (Sarı)**
   * Her iki tarafta da doğrulananlar: **Eşleşti (Yeşil)**
+
+* **Önbellek:** Aynı PDF (içerik hash'i) tekrar yüklendiğinde OCR atlanır; sonuç `var/cache/ocr_*.json` üzerinden okunur (cron 7 günde temizler). Python OCR süreçleri `nice -n 10` ile düşük CPU önceliğinde çalışır.
