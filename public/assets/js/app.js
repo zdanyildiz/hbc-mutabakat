@@ -352,6 +352,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const barcode = suspect.terminal_barcode;
             const storeBarcode = suspect.store_barcode;
             const distance = suspect.distance;
+            const confText = suspect.confidence !== undefined ? ` | %${suspect.confidence} OCR Güven` : '';
             const rawStoreName = currentData.barcodeStores[barcode] || currentData.barcodeStores[storeBarcode];
             const storeName = cleanStoreName(rawStoreName);
             allRows.push({
@@ -364,7 +365,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="font-semibold">
                         ${escapeHtml(storeBarcode)}
                         <div class="suspected-detail">
-                            <span class="levenshtein-badge">🔍 ${distance} karakter fark</span>
+                            <span class="levenshtein-badge">🔍 ${distance} hane fark ${escapeHtml(confText)}</span>
                         </div>
                     </td>
                     <td class="text-secondary">${escapeHtml(storeName)}</td>

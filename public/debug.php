@@ -17,6 +17,17 @@ use App\PdfExtractor;
 
 $config = require dirname(__DIR__) . '/config.php';
 
+// Güvenlik: Canlı ortamda dışarıdan yetkisiz ağır OCR yüklemesini engelleme
+$debugEnabled = (bool)($config['enable_debug'] ?? false);
+$debugKey = (string)($config['debug_key'] ?? '');
+$accessKey = (string)($_GET['key'] ?? ($_POST['key'] ?? ''));
+
+if (!$debugEnabled && ($debugKey === '' || $accessKey !== $debugKey)) {
+    header('HTTP/1.1 403 Forbidden');
+    echo 'Erişim reddedildi: Debug modu devre dışı veya yetkisiz erişim.';
+    exit;
+}
+
 $textRaw = '';
 $ocrRaw = '';
 $formattedText = '';

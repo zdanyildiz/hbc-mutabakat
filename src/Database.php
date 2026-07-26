@@ -124,7 +124,6 @@ class Database
      *     matched_count: int,
      *     missing_count: int,
      *     extra_count: int,
-     *     results_json: string,
      *     created_at: string
      * }>
      */
@@ -134,9 +133,10 @@ class Database
             return [];
         }
 
-        $sql = "SELECT id, store_name, terminal_count, store_count, matched_count, missing_count, extra_count, results_json, created_at 
+        $sql = "SELECT id, store_name, terminal_count, store_count, matched_count, missing_count, extra_count, created_at 
                 FROM reconciliations 
-                ORDER BY created_at DESC";
+                ORDER BY created_at DESC 
+                LIMIT 50";
 
         try {
             $stmt = $this->pdo->query($sql);
@@ -151,7 +151,6 @@ class Database
              *     matched_count: int|string,
              *     missing_count: int|string,
              *     extra_count: int|string,
-             *     results_json: string,
              *     created_at: string
              * }> $rows */
             $rows = $stmt->fetchAll();
@@ -165,7 +164,6 @@ class Database
                     'matched_count' => (int)$row['matched_count'],
                     'missing_count' => (int)$row['missing_count'],
                     'extra_count' => (int)$row['extra_count'],
-                    'results_json' => $row['results_json'],
                     'created_at' => $row['created_at'],
                 ];
             }

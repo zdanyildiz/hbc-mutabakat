@@ -102,8 +102,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         $excelExtractor = new ExcelExtractor();
         $pdfExtractor = new PdfExtractor();
         
-        // Görsel OCR Modu varsayılan olarak her zaman aktiftir
-        $pdfExtractor->setUseOcr(true);
+        // Hızlı Mod (OCR'sız) kontrolü
+        $useFastMode = isset($_POST['fast_mode']) && ($_POST['fast_mode'] === '1' || $_POST['fast_mode'] === 'true');
+        $pdfExtractor->setUseOcr(!$useFastMode);
 
         $reconciler = new Reconciler($excelExtractor, $pdfExtractor);
 
@@ -316,7 +317,6 @@ if ($action === 'export-excel-saved') {
  *     matched_count: int,
  *     missing_count: int,
  *     extra_count: int,
- *     results_json: string,
  *     created_at: string
  * }> $pastReports */
 $pastReports = [];
@@ -417,6 +417,11 @@ if ($dbEnabled) {
                                 <button type="button" class="remove-file-btn">&times;</button>
                             </div>
                         </div>
+                    </div>
+
+                    <div class="form-option" style="margin-top: 1rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; color: var(--text-muted); font-size: 0.9rem;">
+                        <input type="checkbox" id="fast_mode" name="fast_mode" value="1" style="width: 1.1rem; height: 1.1rem; cursor: pointer;">
+                        <label for="fast_mode" style="cursor: pointer; user-select: none;">⚡ <strong>Hızlı Mod:</strong> Sadece dijital metin taraması yap (OCR'sız, saniyeler içinde tamamlanır)</label>
                     </div>
 
                     <button type="submit" class="btn btn-primary" id="submitBtn" style="position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 0.75rem;">

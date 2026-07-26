@@ -88,12 +88,29 @@ class Reconciler
         $matchedText = [];
         $missingInStore = [];
 
-        // 1. Aşama: Tam Eşleşenler (OCR Taraması ile)
+        // TSV çıktısından gelen kelime/rakam güven skorlarını haritalayalım
+        $wordConfs = $this->pdfExtractor->getWordConfidences();
+        $confidenceLookup = [];
+        foreach ($wordConfs as $wc) {
+            $digits = preg_replace('/\D/', '', $wc['text']);
+            if ($digits !== '') {
+                $confidenceLookup[$digits] = $wc['conf'];
+            }
+        }
+
+        // 1. Aşama: Tam Eşleşenler (OCR Taraması ile) - Döngü öncesi pre-clean
+        $cleanPdfLinesPool = [];
+        foreach ($pdfLinesPool as $idx => $pdfLine) {
+            $clean = preg_replace('/\s+/', '', $pdfLine);
+            if ($clean !== null && $clean !== '') {
+                $cleanPdfLinesPool[$idx] = $clean;
+            }
+        }
+
         foreach ($terminalBarcodes as $terminalBarcode) {
             $found = false;
-            foreach ($pdfLinesPool as $idx => $pdfLine) {
-                $pdfLineClean = preg_replace('/\s+/', '', $pdfLine);
-                if ($pdfLineClean === null || $pdfLineClean === '') {
+            foreach ($cleanPdfLinesPool as $idx => $pdfLineClean) {
+                if (!isset($pdfLinesPool[$idx])) {
                     continue;
                 }
 
@@ -101,9 +118,6 @@ class Reconciler
                 $contains = str_contains($pdfLineClean, $terminalBarcode);
 
                 // Geri yön: PDF satırının tamamı barkodun bir parçası (bölünmüş/kısmi okuma).
-                // SADECE rakamdan oluşan ve >= 6 haneli parçalarla sınırlı; aksi halde
-                // "474" gibi sayfa/sıra numaraları barkodun içinde geçtiği için yanlışlıkla
-                // eşleşip gerçek bir eksik/fazla koliyi gizleyebiliyordu.
                 $isPartial = strlen($pdfLineClean) >= 6
                     && ctype_digit($pdfLineClean)
                     && str_contains($terminalBarcode, $pdfLineClean);
@@ -111,6 +125,7 @@ class Reconciler
                 if ($contains || $isPartial) {
                     $matchedOcr[] = $terminalBarcode;
                     unset($pdfLinesPool[$idx]);
+                    unset($cleanPdfLinesPool[$idx]);
                     $found = true;
                     break;
                 }
@@ -382,12 +397,17 @@ class Reconciler
                 $matched[] = $missingBarcode;
                 \App\Logger::log("[Reconciler-Fuzzy] Tam Eşleşme (Mesafe 0) Bulundu: " . $missingBarcode);
             } else {
-                $suspectedMatches[] = [
+                $suspectItem = [
                     'terminal_barcode' => $missingBarcode,
                     'store_barcode' => $bestStore,
                     'distance' => $bestDiff,
                 ];
-                \App\Logger::log("[Reconciler-Fuzzy] Şüpheli Eşleşme Bulundu: " . $missingBarcode . " <-> " . $bestStore . " (Hane farkı: " . $bestDiff . " | Gerçek hata: " . $bestHard . ")");
+                if (isset($confidenceLookup[$bestStore])) {
+                    $suspectItem['confidence'] = $confidenceLookup[$bestStore];
+                }
+                $suspectedMatches[] = $suspectItem;
+                $confLog = isset($suspectItem['confidence']) ? " | Güven: %" . $suspectItem['confidence'] : "";
+                \App\Logger::log("[Reconciler-Fuzzy] Şüpheli Eşleşme Bulundu: " . $missingBarcode . " <-> " . $bestStore . " (Hane farkı: " . $bestDiff . " | Gerçek hata: " . $bestHard . $confLog . ")");
             }
         }
         $missingInStore = $stillMissingAfterFuzzy;

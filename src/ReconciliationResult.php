@@ -12,7 +12,7 @@ class ReconciliationResult
      * @param array<string> $matched
      * @param array<string> $missingInStore
      * @param array<string> $extraInStore
-     * @param array<array{terminal_barcode: string, store_barcode: string, distance: int}> $suspectedMatches
+     * @param array<array{terminal_barcode: string, store_barcode: string, distance: int, confidence?: int}> $suspectedMatches
      * @param array<string> $matchedOcr
      * @param array<string> $matchedText
      * @param array<string> $invalidBarcodes

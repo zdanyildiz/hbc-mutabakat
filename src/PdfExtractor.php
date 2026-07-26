@@ -17,6 +17,15 @@ class PdfExtractor
      */
     private array $mismatches = [];
 
+    /** @var array<string, array<string>> */
+    private array $extractCache = [];
+
+    /** @var array<string, string> */
+    private array $rawTextCache = [];
+
+    /** @var array<array{text: string, conf: int, page: int}> */
+    private array $wordConfidences = [];
+
     private bool $useOcr = true;
 
     /** Maximum seconds to wait for the Python subprocess before terminating it. */
@@ -30,6 +39,16 @@ class PdfExtractor
     public function isUseOcr(): bool
     {
         return $this->useOcr;
+    }
+
+    /**
+     * Retrieves extracted TSV word confidence scores.
+     *
+     * @return array<array{text: string, conf: int, page: int}>
+     */
+    public function getWordConfidences(): array
+    {
+        return $this->wordConfidences;
     }
 
     /**
@@ -65,16 +84,26 @@ class PdfExtractor
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
 
+        $mtime = filemtime($filePath);
+        $cacheKey = md5($filePath . '_' . $mtime . '_' . ($this->useOcr ? 'ocr' : 'text'));
+        if (isset($this->extractCache[$cacheKey])) {
+            \App\Logger::log("[PdfExtractor] Önbellekten okundu (extract): " . basename($filePath) . " [Mod: " . ($this->useOcr ? 'ocr' : 'text') . "]");
+            return $this->extractCache[$cacheKey];
+        }
+
         // Try Python extraction first
         $mode = $this->useOcr ? 'ocr' : 'text';
         $pythonResult = $this->extractWithPython($filePath, $mode);
         if ($pythonResult !== null) {
+            $this->extractCache[$cacheKey] = $pythonResult;
             return $pythonResult;
         }
 
         // Fallback to optimized native PHP extraction
         if ($this->useOcr) {
-            return $this->extractOcrPhp($filePath);
+            $phpResult = $this->extractOcrPhp($filePath);
+            $this->extractCache[$cacheKey] = $phpResult;
+            return $phpResult;
         }
 
         $pdfStart = microtime(true);
@@ -291,6 +320,10 @@ class PdfExtractor
             return null;
         }
 
+        $config = @include dirname(__DIR__) . '/config.php';
+        $workers = is_array($config) && isset($config['ocr_workers']) ? (int)$config['ocr_workers'] : 3;
+        $lockFile = is_array($config) && isset($config['lock_file']) ? (string)$config['lock_file'] : (sys_get_temp_dir() . '/hbc_reconcile_ocr.lock');
+
         $pythonExecutable = 'python3';
         if (PHP_OS_FAMILY === 'Windows') {
             $pythonExecutable = 'python';
@@ -302,9 +335,32 @@ class PdfExtractor
             }
         }
 
-        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
+        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --workers ' . $workers . ' --pdf ' . escapeshellarg($filePath);
 
-        $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live');
+        $lockFp = null;
+        if ($mode === 'ocr') {
+            $lockDir = dirname($lockFile);
+            if (!is_dir($lockDir)) {
+                @mkdir($lockDir, 0755, true);
+            }
+            $lockFp = @fopen($lockFile, 'c+');
+            if ($lockFp !== false) {
+                \App\Logger::log("[PdfExtractor-Lock] OCR sunucu geneli kilit bekleniyor (" . basename($lockFile) . ")...");
+                flock($lockFp, LOCK_EX);
+                \App\Logger::log("[PdfExtractor-Lock] Kilit alındı, OCR işlemi başlatılıyor.");
+            }
+        }
+
+        try {
+            $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live');
+        } finally {
+            if ($lockFp !== null && $lockFp !== false) {
+                flock($lockFp, LOCK_UN);
+                fclose($lockFp);
+                \App\Logger::log("[PdfExtractor-Lock] Kilit serbest bırakıldı.");
+            }
+        }
+
         if ($result === null) {
             \App\Logger::log("[PdfExtractor-Python] HATA: Süreç başlatılamadı.");
             return null;
@@ -319,9 +375,12 @@ class PdfExtractor
         if (is_array($data) && isset($data['success']) && $data['success'] === true) {
             $this->barcodeToOriginalMap = [];
             $this->mismatches = [];
+            if (isset($data['word_confidences']) && is_array($data['word_confidences'])) {
+                $this->wordConfidences = array_merge($this->wordConfidences, $data['word_confidences']);
+            }
 
             $timeLog = isset($data['elapsed_time']) ? "Süre: {$data['elapsed_time']} sn" : "";
-            \App\Logger::log("[PdfExtractor-Python] Başarıyla tamamlandı - Mod: {$mode} | {$timeLog}");
+            \App\Logger::log("[PdfExtractor-Python] Başarıyla tamamlandı - Mod: {$mode} | Workers: {$workers} | {$timeLog}");
 
             return $data['lines'] ?? [];
         }
@@ -582,9 +641,20 @@ class PdfExtractor
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
 
+        $mtime = filemtime($filePath);
+        $cacheKey = md5($filePath . '_' . $mtime . '_' . $mode);
+        if (isset($this->rawTextCache[$cacheKey])) {
+            \App\Logger::log("[PdfExtractor] Önbellekten okundu (extractRawText): " . basename($filePath) . " [Mod: {$mode}]");
+            return $this->rawTextCache[$cacheKey];
+        }
+
         // Try Python extraction first with --raw flag
         $pythonScript = dirname(__DIR__) . '/src/reconcile.py';
         if (file_exists($pythonScript)) {
+            $config = @include dirname(__DIR__) . '/config.php';
+            $workers = is_array($config) && isset($config['ocr_workers']) ? (int)$config['ocr_workers'] : 3;
+            $lockFile = is_array($config) && isset($config['lock_file']) ? (string)$config['lock_file'] : (dirname(__DIR__) . '/var/hbc_reconcile_ocr.lock');
+
             $pythonExecutable = 'python3';
             $checkCommand = PHP_OS_FAMILY === 'Windows' ? 'where python3' : 'which python3';
             $hasPython3 = (string)shell_exec($checkCommand);
@@ -592,13 +662,38 @@ class PdfExtractor
                 $pythonExecutable = 'python';
             }
 
-            $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --raw --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
+            $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --raw --mode ' . escapeshellarg($mode) . ' --workers ' . $workers . ' --pdf ' . escapeshellarg($filePath);
 
-            $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live-Raw');
+            $lockFp = null;
+            if ($mode === 'ocr') {
+                $lockDir = dirname($lockFile);
+                if (!is_dir($lockDir)) {
+                    @mkdir($lockDir, 0755, true);
+                }
+                $lockFp = @fopen($lockFile, 'c+');
+                if ($lockFp !== false) {
+                    \App\Logger::log("[PdfExtractor-Lock-Raw] OCR sunucu geneli kilit bekleniyor (" . basename($lockFile) . ")...");
+                    flock($lockFp, LOCK_EX);
+                    \App\Logger::log("[PdfExtractor-Lock-Raw] Kilit alındı, Raw OCR işlemi başlatılıyor.");
+                }
+            }
+
+            try {
+                $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live-Raw');
+            } finally {
+                if ($lockFp !== null && $lockFp !== false) {
+                    flock($lockFp, LOCK_UN);
+                    fclose($lockFp);
+                    \App\Logger::log("[PdfExtractor-Lock-Raw] Kilit serbest bırakıldı.");
+                }
+            }
+
             if ($result !== null && !$result['timed_out']) {
                 $data = json_decode(trim($result['stdout']), true);
                 if (is_array($data) && isset($data['success']) && $data['success'] === true) {
-                    return $data['raw_text'] ?? '';
+                    $rawText = $data['raw_text'] ?? '';
+                    $this->rawTextCache[$cacheKey] = $rawText;
+                    return $rawText;
                 }
             } elseif ($result !== null && $result['timed_out']) {
                 \App\Logger::log("[PdfExtractor-Python-Raw] HATA: İşlem " . self::PYTHON_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
@@ -614,7 +709,9 @@ class PdfExtractor
         $parser = new \Smalot\PdfParser\Parser();
         try {
             $pdf = $parser->parseFile($filePath);
-            return $pdf->getText();
+            $rawText = $pdf->getText();
+            $this->rawTextCache[$cacheKey] = $rawText;
+            return $rawText;
         } catch (\Exception $e) {
             throw new \RuntimeException("PDF dosyası ayrıştırılamadı (Smalot): " . $e->getMessage());
         }
