@@ -419,7 +419,7 @@ if ($dbEnabled) {
                         </div>
                     </div>
 
-                    <div class="form-option" style="margin-top: 1rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; color: var(--text-muted); font-size: 0.9rem;">
+                    <div class="form-option" style="display: none; margin-top: 1rem; margin-bottom: 1rem; align-items: center; gap: 0.5rem; color: var(--text-muted); font-size: 0.9rem;">
                         <input type="checkbox" id="fast_mode" name="fast_mode" value="1" style="width: 1.1rem; height: 1.1rem; cursor: pointer;">
                         <label for="fast_mode" style="cursor: pointer; user-select: none;">⚡ <strong>Hızlı Mod:</strong> Sadece dijital metin taraması yap (OCR'sız, saniyeler içinde tamamlanır)</label>
                     </div>
