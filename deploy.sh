@@ -9,7 +9,7 @@ git fetch origin main
 git reset --hard origin/main
 
 # Klasör izinlerini Nginx (www-data) için güvenli hale getir
-mkdir -p "$PROJECT_DIR"/var
+mkdir -p "$PROJECT_DIR"/var/uploads "$PROJECT_DIR"/var/reports "$PROJECT_DIR"/var/logs "$PROJECT_DIR"/var/tmp
 if [ "$EUID" -eq 0 ]; then
   chown -R www-data:www-data "$PROJECT_DIR"
 fi
