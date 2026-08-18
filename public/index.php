@@ -34,7 +34,8 @@ $action = $_GET['action'] ?? '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
     header('Content-Type: application/json; charset=utf-8');
     header('X-Accel-Buffering: no'); // Nginx'in veriyi buffer'lamasını engeller, anında gönderir
-    @set_time_limit(600); // 10 dakika limit
+    @set_time_limit(900); // 15 dakika limit
+    @ini_set('memory_limit', '512M');
     
     // PHP'nin çıktı önbelleğini kapatıp veriyi anlık göndermesini sağlıyoruz
     while (ob_get_level() > 0) {
@@ -351,14 +352,23 @@ if ($dbEnabled) {
                     <p>Deterministik Veri Eşleştirme Motoru</p>
                 </div>
             </div>
-            <div class="system-status">
+            <div class="system-status" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                <?php
+                $gKey = (string)($config['google_vision_api_key'] ?? '');
+                $hasGoogleVision = $gKey !== '' && $gKey !== 'your_google_cloud_vision_api_key_here';
+                ?>
+                <?php if ($hasGoogleVision): ?>
+                    <span class="status-badge status-active" style="background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa;">
+                        <span class="pulse-dot" style="background: #3b82f6;"></span> ☁️ Google Cloud Vision
+                    </span>
+                <?php else: ?>
+                    <span class="status-badge status-inactive" title=".env dosyasında GOOGLE_VISION_API_KEY tanımlanmalıdır.">
+                        ⚠️ Google Vision API Key Eksik (.env)
+                    </span>
+                <?php endif; ?>
                 <?php if ($dbEnabled): ?>
                     <span class="status-badge status-active">
                         <span class="pulse-dot"></span> MySQL Aktif
-                    </span>
-                <?php else: ?>
-                    <span class="status-badge status-inactive" title="Raporlar veritabanına kaydedilmeyecektir. config.php üzerinden aktif edebilirsiniz.">
-                        ⚠️ MySQL Devre Dışı
                     </span>
                 <?php endif; ?>
             </div>

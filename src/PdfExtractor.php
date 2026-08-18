@@ -19,8 +19,32 @@ class PdfExtractor
 
     private bool $useOcr = true;
 
-    /** Maximum seconds to wait for the Python subprocess before terminating it. */
-    private const PYTHON_TIMEOUT_SECONDS = 300;
+    /** @var array<string, array<string>> In-memory cache for extracted lines */
+    private array $extractCache = [];
+
+    /** @var array<string, string> In-memory cache for raw text */
+    private array $rawTextCache = [];
+
+    private ?GoogleVisionClient $googleVisionClient = null;
+
+    /** Maximum seconds to wait for subprocesses before terminating. */
+    private const PROCESS_TIMEOUT_SECONDS = 900;
+
+    public function __construct(?GoogleVisionClient $googleVisionClient = null)
+    {
+        if ($googleVisionClient !== null) {
+            $this->googleVisionClient = $googleVisionClient;
+        } else {
+            $apiKey = Env::get('GOOGLE_VISION_API_KEY');
+            if ($apiKey !== null && trim($apiKey) !== '' && $apiKey !== 'your_google_cloud_vision_api_key_here') {
+                try {
+                    $this->googleVisionClient = new GoogleVisionClient($apiKey);
+                } catch (\Exception $e) {
+                    \App\Logger::log("[PdfExtractor] GoogleVisionClient başlatılamadı: " . $e->getMessage());
+                }
+            }
+        }
+    }
 
     public function setUseOcr(bool $useOcr): void
     {
@@ -65,16 +89,37 @@ class PdfExtractor
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
 
-        // Try Python extraction first
+        $mtime = filemtime($filePath);
         $mode = $this->useOcr ? 'ocr' : 'text';
+        $cacheKey = md5($filePath . '_' . $mtime . '_' . $mode);
+
+        if (isset($this->extractCache[$cacheKey])) {
+            \App\Logger::log("[PdfExtractor] Önbellekten okundu (extract): " . basename($filePath) . " [Mod: {$mode}]");
+            return $this->extractCache[$cacheKey];
+        }
+
+        // 1. Google Cloud Vision OCR (Primary Cloud Engine if OCR enabled & API key set)
+        if ($this->useOcr && $this->googleVisionClient !== null) {
+            $googleResult = $this->extractWithGoogleVision($filePath);
+            if ($googleResult !== null && !empty($googleResult)) {
+                $this->extractCache[$cacheKey] = $googleResult;
+                return $googleResult;
+            }
+            \App\Logger::log("[PdfExtractor] Google Cloud Vision boş döndü veya hata oluştu, yerel motora geçiliyor...");
+        }
+
+        // 2. Python Backend (PaddleOCR / Tesseract Fallback)
         $pythonResult = $this->extractWithPython($filePath, $mode);
         if ($pythonResult !== null) {
+            $this->extractCache[$cacheKey] = $pythonResult;
             return $pythonResult;
         }
 
-        // Fallback to optimized native PHP extraction
+        // 3. Fallback to native PHP extraction
         if ($this->useOcr) {
-            return $this->extractOcrPhp($filePath);
+            $result = $this->extractOcrPhp($filePath);
+            $this->extractCache[$cacheKey] = $result;
+            return $result;
         }
 
         $pdfStart = microtime(true);
@@ -116,15 +161,102 @@ class PdfExtractor
         $elapsed = round(microtime(true) - $pdfStart, 4);
         \App\Logger::log("[PdfExtractor-Text] Tamamlandı - Süre: {$elapsed} saniye | Benzersiz Barkod: " . count($barcodes));
 
+        $this->extractCache[$cacheKey] = $barcodes;
         return $barcodes;
+    }
+
+    /**
+     * Extracts text from PDF using Google Cloud Vision API.
+     *
+     * @param string $filePath
+     * @return array<string>|null
+     */
+    private function extractWithGoogleVision(string $filePath): ?array
+    {
+        if ($this->googleVisionClient === null) {
+            return null;
+        }
+
+        $start = microtime(true);
+        \App\Logger::log("[PdfExtractor-GoogleVision] Google Cloud Vision OCR başlıyor: " . basename($filePath));
+
+        $tempDir = dirname(__DIR__) . '/var/tmp';
+        if (!is_dir($tempDir)) {
+            @mkdir($tempDir, 0775, true);
+        }
+
+        $tempPrefix = $tempDir . '/gpage_' . uniqid();
+        $images = [];
+
+        try {
+            // Render PDF pages to compressed grayscale PNGs (200 DPI is optimal for Google Vision)
+            $checkPdftoppm = PHP_OS_FAMILY === 'Windows' ? 'where pdftoppm' : 'which pdftoppm';
+            $hasPdftoppm = (string)shell_exec($checkPdftoppm);
+
+            if (trim($hasPdftoppm) !== '') {
+                $cmd = 'pdftoppm -png -gray -r 200 ' . escapeshellarg($filePath) . ' ' . escapeshellarg($tempPrefix);
+                shell_exec($cmd);
+
+                $pattern = $tempPrefix . '-*.png';
+                $pageFiles = glob($pattern);
+                if ($pageFiles !== false && !empty($pageFiles)) {
+                    sort($pageFiles, SORT_NATURAL);
+                    $images = $pageFiles;
+                }
+            }
+
+            // Imagick fallback if pdftoppm did not produce images
+            if (empty($images) && class_exists('\Imagick')) {
+                $ping = new \Imagick();
+                $ping->pingImage($filePath);
+                $pageCount = $ping->getNumberImages();
+                $ping->clear();
+                $ping->destroy();
+
+                for ($i = 0; $i < $pageCount; $i++) {
+                    $img = new \Imagick();
+                    $img->setResolution(200, 200);
+                    $img->readImage($filePath . '[' . $i . ']');
+                    $img->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
+                    $img->setImageFormat('png');
+                    $outPath = $tempPrefix . '-' . ($i + 1) . '.png';
+                    $img->writeImage($outPath);
+                    $img->clear();
+                    $img->destroy();
+                    $images[] = $outPath;
+                }
+            }
+
+            if (empty($images)) {
+                \App\Logger::log("[PdfExtractor-GoogleVision] HATA: PDF sayfaları görsele dönüştürülemedi.");
+                return null;
+            }
+
+            $pageTexts = $this->googleVisionClient->annotateImages($images);
+            $fullText = implode("\f", $pageTexts);
+
+            $elapsed = round(microtime(true) - $start, 4);
+            $lines = $this->processText($fullText);
+            \App\Logger::log("[PdfExtractor-GoogleVision] Başarıyla tamamlandı - Toplam Sayfa: " . count($images) . " | Süre: {$elapsed} saniye | Çıkarılan Satır: " . count($lines));
+
+            return $lines;
+        } catch (\Throwable $e) {
+            \App\Logger::log("[PdfExtractor-GoogleVision] HATA: " . $e->getMessage());
+            return null;
+        } finally {
+            foreach ($images as $img) {
+                if (file_exists($img)) {
+                    @unlink($img);
+                }
+            }
+        }
     }
 
     /**
      * Extracts store name from PDF file.
      *
-     * @param string $filePath PDF içeriğinin okunacağı (yüklemede geçici) dosya yolu.
-     * @param string|null $originalName Orijinal dosya adı (örn. "T410.pdf"). Mağaza kodunu
-     *     buradan alırız; aksi halde sunucudaki "phpXXXX" geçici adı mağaza adına sızar.
+     * @param string $filePath
+     * @param string|null $originalName
      * @return string
      */
     public function extractStoreName(string $filePath, ?string $originalName = null): string
@@ -235,16 +367,9 @@ class PdfExtractor
     /**
      * Builds a map of cleaned barcode (digits only) => store name for a single PDF.
      *
-     * The store name is resolved once per PDF via {@see extractStoreName()}. Each PDF line
-     * is then split into words and the digit-only candidate of each word (matching the same
-     * per-word logic the Reconciler uses to detect "extra" barcodes) is mapped to that store.
-     * This is what lets the "Fazla Koliler" (extra) rows display the correct store, since those
-     * barcodes only exist in the PDF and never in the Excel/terminal list.
-     *
      * @param string $filePath
-     * @param string|null $originalName Orijinal dosya adı (örn. "T410.pdf"); mağaza adının
-     *     geçici "phpXXXX" dosya adından türememesi için {@see extractStoreName()}'e geçilir.
-     * @return array<string, string> Cleaned barcode => store name.
+     * @param string|null $originalName
+     * @return array<string, string>
      */
     public function extractBarcodeStoreMap(string $filePath, ?string $originalName = null): array
     {
@@ -278,7 +403,6 @@ class PdfExtractor
 
     /**
      * Tries to extract barcodes using the Python backend.
-     * Returns null if Python is not available or fails, allowing PHP fallback.
      *
      * @param string $filePath
      * @param string $mode
@@ -291,18 +415,25 @@ class PdfExtractor
             return null;
         }
 
+        $config = @include dirname(__DIR__) . '/config.php';
+        $workers = is_array($config) && isset($config['ocr_workers']) ? (int)$config['ocr_workers'] : 8;
+        $engine = is_array($config) && isset($config['ocr_engine']) ? (string)$config['ocr_engine'] : 'paddle';
+
         $pythonExecutable = 'python3';
         if (PHP_OS_FAMILY === 'Windows') {
             $pythonExecutable = 'python';
         } else {
-            // Check python3 availability on Unix
-            $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
-            if (trim($hasPython3) === '') {
-                $pythonExecutable = 'python';
+            if (file_exists('/opt/paddleocr_env/bin/python3')) {
+                $pythonExecutable = '/opt/paddleocr_env/bin/python3';
+            } else {
+                $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
+                if (trim($hasPython3) === '') {
+                    $pythonExecutable = 'python';
+                }
             }
         }
 
-        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
+        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --engine ' . escapeshellarg($engine) . ' --workers ' . $workers . ' --pdf ' . escapeshellarg($filePath);
 
         $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live');
         if ($result === null) {
@@ -311,10 +442,11 @@ class PdfExtractor
         }
 
         if ($result['timed_out']) {
-            \App\Logger::log("[PdfExtractor-Python] HATA: İşlem " . self::PYTHON_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
+            \App\Logger::log("[PdfExtractor-Python] HATA: İşlem " . self::PROCESS_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
             return null;
         }
 
+        /** @var array{success?: bool, lines?: array<string>, elapsed_time?: float}|null $data */
         $data = json_decode(trim($result['stdout']), true);
         if (is_array($data) && isset($data['success']) && $data['success'] === true) {
             $this->barcodeToOriginalMap = [];
@@ -331,19 +463,18 @@ class PdfExtractor
     }
 
     /**
-     * Runs a shell command via proc_open, streaming stdout/stderr non-blockingly,
-     * and enforcing an overall timeout to avoid hanging indefinitely on a stuck subprocess.
+     * Runs a shell command via proc_open.
      *
      * @param string $cmd
-     * @param string $liveLogPrefix Log tag used for lines containing "OCR_PROGRESS:"
-     * @return array{stdout: string, stderr: string, timed_out: bool}|null Null if the process could not be started.
+     * @param string $liveLogPrefix
+     * @return array{stdout: string, stderr: string, timed_out: bool}|null
      */
     private function runProcessWithTimeout(string $cmd, string $liveLogPrefix): ?array
     {
         $descriptorspec = [
-            0 => ["pipe", "r"], // stdin
-            1 => ["pipe", "w"], // stdout
-            2 => ["pipe", "w"]  // stderr
+            0 => ["pipe", "r"],
+            1 => ["pipe", "w"],
+            2 => ["pipe", "w"]
         ];
 
         $process = proc_open($cmd, $descriptorspec, $pipes);
@@ -364,9 +495,7 @@ class PdfExtractor
             $write = null;
             $except = null;
 
-            // Wait up to 200ms
             $numChanged = stream_select($read, $write, $except, 0, 200000);
-
             if ($numChanged === false) {
                 break;
             }
@@ -385,7 +514,6 @@ class PdfExtractor
                         if ($chunk !== false && $chunk !== '') {
                             $stderrData .= $chunk;
                             $hasRead = true;
-                            // Parse live stderr and log to app.log instantly
                             $lines = explode("\n", $chunk);
                             foreach ($lines as $line) {
                                 $line = trim($line);
@@ -405,7 +533,6 @@ class PdfExtractor
 
             $status = proc_get_status($process);
             if (!$status['running']) {
-                // Read remaining outputs one last time
                 while (($chunk = fread($pipes[1], 8192)) !== '' && $chunk !== false) {
                     $stdoutData .= $chunk;
                 }
@@ -415,14 +542,14 @@ class PdfExtractor
                 break;
             }
 
-            if ((microtime(true) - $startTime) > self::PYTHON_TIMEOUT_SECONDS) {
+            if ((microtime(true) - $startTime) > self::PROCESS_TIMEOUT_SECONDS) {
                 $timedOut = true;
                 proc_terminate($process, 9);
                 break;
             }
 
             if ($numChanged === 0 && !$hasRead) {
-                usleep(10000); // 10ms CPU sleep
+                usleep(10000);
             }
         }
 
@@ -435,7 +562,7 @@ class PdfExtractor
     }
 
     /**
-     * Extracts barcode/tracking numbers from a PDF file using native PHP OCR (Imagick + Tesseract).
+     * Native PHP OCR fallback using Imagick + Tesseract.
      *
      * @param string $filePath
      * @return array<string>
@@ -453,7 +580,7 @@ class PdfExtractor
         $images = [];
         $tempDir = dirname(__DIR__) . '/var/tmp';
         if (!is_dir($tempDir)) {
-            mkdir($tempDir, 0750, true);
+            @mkdir($tempDir, 0775, true);
         }
 
         try {
@@ -467,18 +594,10 @@ class PdfExtractor
 
             for ($i = 0; $i < $pageCount; $i++) {
                 $pageStart = microtime(true);
-                echo " ";
-                if (function_exists('ob_flush') && ob_get_level() > 0) {
-                    @ob_flush();
-                }
-                flush();
-
                 $pageImagick = new \Imagick();
-                $pageImagick->setResolution(300, 300); // Optimized resolution (300 DPI)
+                $pageImagick->setResolution(300, 300);
                 $pageImagick->readImage($filePath . '[' . $i . ']');
-
                 $pageImagick->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
-                // Enhance contrast before thresholding
                 // @phpstan-ignore-next-line
                 $pageImagick->levelImage(0.25 * \Imagick::getQuantum(), 1.0, 0.75 * \Imagick::getQuantum());
                 $pageImagick->thresholdImage(0.5 * \Imagick::getQuantum());
@@ -498,7 +617,7 @@ class PdfExtractor
             \App\Logger::log("[PdfExtractor-OCR] Imagick HATA: " . $e->getMessage());
             foreach ($images as $img) {
                 if (file_exists($img)) {
-                    unlink($img);
+                    @unlink($img);
                 }
             }
             throw new \RuntimeException("PDF görsele dönüştürülürken hata oluştu: " . $e->getMessage());
@@ -507,12 +626,6 @@ class PdfExtractor
         $allText = '';
 
         foreach ($images as $index => $pagePath) {
-            echo " ";
-            if (function_exists('ob_flush') && ob_get_level() > 0) {
-                @ob_flush();
-            }
-            flush();
-
             try {
                 $tessStart = microtime(true);
                 $ocr = new TesseractOCR($pagePath);
@@ -523,7 +636,7 @@ class PdfExtractor
                 $text = $ocr->run();
 
                 if (file_exists($pagePath)) {
-                    unlink($pagePath);
+                    @unlink($pagePath);
                 }
 
                 $tessElapsed = round(microtime(true) - $tessStart, 4);
@@ -532,7 +645,7 @@ class PdfExtractor
             } catch (\Exception $e) {
                 \App\Logger::log("[PdfExtractor-OCR] UYARI: Sayfa {$index} okunamadı - Hata: " . $e->getMessage());
                 if (file_exists($pagePath)) {
-                    unlink($pagePath);
+                    @unlink($pagePath);
                 }
             }
         }
@@ -545,8 +658,7 @@ class PdfExtractor
     }
 
     /**
-     * Helper to process text: strips all whitespaces from each line,
-     * and skips lines shorter than 18 characters.
+     * Process text lines and skip empty lines.
      *
      * @param string $text
      * @return array<string>
@@ -561,7 +673,6 @@ class PdfExtractor
             if ($lineStrip === '') {
                 continue;
             }
-
             $processedLines[] = $lineStrip;
         }
 
@@ -569,7 +680,7 @@ class PdfExtractor
     }
 
     /**
-     * Extracts raw text from PDF using the specified mode.
+     * Extracts raw text from PDF.
      *
      * @param string $filePath
      * @param string $mode
@@ -582,41 +693,34 @@ class PdfExtractor
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
 
-        // Try Python extraction first with --raw flag
-        $pythonScript = dirname(__DIR__) . '/src/reconcile.py';
-        if (file_exists($pythonScript)) {
-            $pythonExecutable = 'python3';
-            $checkCommand = PHP_OS_FAMILY === 'Windows' ? 'where python3' : 'which python3';
-            $hasPython3 = (string)shell_exec($checkCommand);
-            if (trim($hasPython3) === '') {
-                $pythonExecutable = 'python';
-            }
+        $mtime = filemtime($filePath);
+        $cacheKey = md5($filePath . '_' . $mtime . '_' . $mode);
+        if (isset($this->rawTextCache[$cacheKey])) {
+            \App\Logger::log("[PdfExtractor] Önbellekten okundu (extractRawText): " . basename($filePath) . " [Mod: {$mode}]");
+            return $this->rawTextCache[$cacheKey];
+        }
 
-            $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --raw --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
-
-            $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live-Raw');
-            if ($result !== null && !$result['timed_out']) {
-                $data = json_decode(trim($result['stdout']), true);
-                if (is_array($data) && isset($data['success']) && $data['success'] === true) {
-                    return $data['raw_text'] ?? '';
+        if ($mode === 'text') {
+            $parser = new Parser();
+            try {
+                $pdf = $parser->parseFile($filePath);
+                $text = $pdf->getText();
+                $this->rawTextCache[$cacheKey] = $text;
+                return $text;
+            } catch (\Exception $e) {
+                // Fallback to pdftotext
+                $output = shell_exec('pdftotext -layout ' . escapeshellarg($filePath) . ' -');
+                if ($output !== null && $output !== false) {
+                    $this->rawTextCache[$cacheKey] = (string)$output;
+                    return (string)$output;
                 }
-            } elseif ($result !== null && $result['timed_out']) {
-                \App\Logger::log("[PdfExtractor-Python-Raw] HATA: İşlem " . self::PYTHON_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
+                throw new \RuntimeException("PDF dosyası ayrıştırılamadı: " . $e->getMessage());
             }
         }
 
-        // Native PHP fallback if Python script is not found or fails
-        if ($mode === 'ocr') {
-            throw new \RuntimeException("Native PHP OCR ham çıktısı desteklenmiyor. Python motoru yüklü olmalıdır.");
-        }
-
-        // Native PDF text parsing fallback (Smalot)
-        $parser = new \Smalot\PdfParser\Parser();
-        try {
-            $pdf = $parser->parseFile($filePath);
-            return $pdf->getText();
-        } catch (\Exception $e) {
-            throw new \RuntimeException("PDF dosyası ayrıştırılamadı (Smalot): " . $e->getMessage());
-        }
+        $lines = $this->extract($filePath);
+        $rawText = implode("\n", $lines);
+        $this->rawTextCache[$cacheKey] = $rawText;
+        return $rawText;
     }
 }
