@@ -321,21 +321,25 @@ class PdfExtractor
         }
 
         $config = @include dirname(__DIR__) . '/config.php';
-        $workers = is_array($config) && isset($config['ocr_workers']) ? (int)$config['ocr_workers'] : 3;
+        $workers = is_array($config) && isset($config['ocr_workers']) ? (int)$config['ocr_workers'] : 8;
+        $engine = is_array($config) && isset($config['ocr_engine']) ? (string)$config['ocr_engine'] : 'paddle';
         $lockFile = is_array($config) && isset($config['lock_file']) ? (string)$config['lock_file'] : (sys_get_temp_dir() . '/hbc_reconcile_ocr.lock');
 
         $pythonExecutable = 'python3';
         if (PHP_OS_FAMILY === 'Windows') {
             $pythonExecutable = 'python';
         } else {
-            // Check python3 availability on Unix
-            $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
-            if (trim($hasPython3) === '') {
-                $pythonExecutable = 'python';
+            if (file_exists('/opt/paddleocr_env/bin/python3')) {
+                $pythonExecutable = '/opt/paddleocr_env/bin/python3';
+            } else {
+                $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
+                if (trim($hasPython3) === '') {
+                    $pythonExecutable = 'python';
+                }
             }
         }
 
-        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --workers ' . $workers . ' --pdf ' . escapeshellarg($filePath);
+        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --engine ' . escapeshellarg($engine) . ' --workers ' . $workers . ' --pdf ' . escapeshellarg($filePath);
 
         $lockFp = null;
         if ($mode === 'ocr') {
@@ -652,17 +656,29 @@ class PdfExtractor
         $pythonScript = dirname(__DIR__) . '/src/reconcile.py';
         if (file_exists($pythonScript)) {
             $config = @include dirname(__DIR__) . '/config.php';
-            $workers = is_array($config) && isset($config['ocr_workers']) ? (int)$config['ocr_workers'] : 3;
+            $workers = is_array($config) && isset($config['ocr_workers']) ? (int)$config['ocr_workers'] : 8;
+            $engine = is_array($config) && isset($config['ocr_engine']) ? (string)$config['ocr_engine'] : 'paddle';
             $lockFile = is_array($config) && isset($config['lock_file']) ? (string)$config['lock_file'] : (dirname(__DIR__) . '/var/hbc_reconcile_ocr.lock');
 
             $pythonExecutable = 'python3';
-            $checkCommand = PHP_OS_FAMILY === 'Windows' ? 'where python3' : 'which python3';
-            $hasPython3 = (string)shell_exec($checkCommand);
-            if (trim($hasPython3) === '') {
-                $pythonExecutable = 'python';
+            if (PHP_OS_FAMILY === 'Windows') {
+                $checkCommand = 'where python3';
+                $hasPython3 = (string)shell_exec($checkCommand);
+                if (trim($hasPython3) === '') {
+                    $pythonExecutable = 'python';
+                }
+            } else {
+                if (file_exists('/opt/paddleocr_env/bin/python3')) {
+                    $pythonExecutable = '/opt/paddleocr_env/bin/python3';
+                } else {
+                    $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
+                    if (trim($hasPython3) === '') {
+                        $pythonExecutable = 'python';
+                    }
+                }
             }
 
-            $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --raw --mode ' . escapeshellarg($mode) . ' --workers ' . $workers . ' --pdf ' . escapeshellarg($filePath);
+            $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --raw --mode ' . escapeshellarg($mode) . ' --engine ' . escapeshellarg($engine) . ' --workers ' . $workers . ' --pdf ' . escapeshellarg($filePath);
 
             $lockFp = null;
             if ($mode === 'ocr') {

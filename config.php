@@ -19,6 +19,7 @@ return [
     'upload_dir' => __DIR__ . '/var/uploads',
     'reports_dir' => __DIR__ . '/var/reports',
     'ocr_workers' => $dynamicOcrWorkers,
+    'ocr_engine' => 'paddle', // 'paddle' (PaddleOCR PP-OCRv4) veya 'tesseract'
     'lock_file' => __DIR__ . '/var/hbc_reconcile_ocr.lock',
     'enable_debug' => false,
     'debug_key' => 'hbcnakliyat_debug_key_2026',

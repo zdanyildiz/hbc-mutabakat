@@ -16,6 +16,28 @@ try:
 except ImportError:
     HAS_PILLOW = False
 
+try:
+    import logging
+    # Suppress Paddle and PaddleX verbose logs
+    logging.getLogger("ppocr").setLevel(logging.ERROR)
+    from paddleocr import PaddleOCR
+    HAS_PADDLE = True
+except ImportError:
+    HAS_PADDLE = False
+
+_PADDLE_INSTANCE = None
+
+
+def get_paddle_instance():
+    """Initializes a shared PaddleOCR PP-OCRv4 instance for fast inference."""
+    global _PADDLE_INSTANCE
+    if _PADDLE_INSTANCE is None and HAS_PADDLE:
+        try:
+            _PADDLE_INSTANCE = PaddleOCR(use_angle_cls=False, lang="en", show_log=False)
+        except Exception as e:
+            sys.stderr.write(f"PaddleOCR init warning: {e}\n")
+    return _PADDLE_INSTANCE
+
 
 def preprocess_image_pillow(input_path: str, output_path: str) -> str:
     """Applies fast in-memory image enhancement using Pillow (PIL)."""
@@ -44,7 +66,6 @@ def parse_tsv_output(tsv_data: str, page_num: int):
     if not lines:
         return "", []
 
-    # Skip header
     header = lines[0].split('\t')
     conf_idx = 10
     text_idx = 11
@@ -97,7 +118,6 @@ def parse_tsv_output(tsv_data: str, page_num: int):
                 "page": page_num
             })
 
-    # Reconstruct text preserving natural appearance order (block_num, par_num, line_num)
     page_text_lines = []
     for key in line_keys_order:
         line_str = " ".join(lines_map[key])
@@ -107,7 +127,8 @@ def parse_tsv_output(tsv_data: str, page_num: int):
     return "\n".join(page_text_lines), word_confidences
 
 
-def ocr_page(img_path: str, page_num: int) -> dict:
+def ocr_page_tesseract(img_path: str, page_num: int) -> dict:
+    """Fallback OCR worker using Tesseract TSV mode."""
     try:
         custom_env = os.environ.copy()
         custom_env["OMP_THREAD_LIMIT"] = "1"
@@ -119,7 +140,6 @@ def ocr_page(img_path: str, page_num: int) -> dict:
         if HAS_PILLOW:
             tess_input_path = preprocess_image_pillow(img_path, clean_img_path)
         else:
-            # ImageMagick fallback if convert exists
             try:
                 subprocess.run([
                     "convert", img_path,
@@ -132,7 +152,6 @@ def ocr_page(img_path: str, page_num: int) -> dict:
             except Exception:
                 tess_input_path = img_path
 
-        # Run Tesseract with TSV output format and -l eng (digit whitelist active)
         result = subprocess.run([
             "tesseract", tess_input_path, "stdout", "tsv",
             "--psm", "6",
@@ -156,6 +175,76 @@ def ocr_page(img_path: str, page_num: int) -> dict:
         return {"text": "", "word_confidences": []}
 
 
+def ocr_page_paddle(img_path: str, page_num: int) -> dict:
+    """Deep Learning OCR worker using PaddleOCR PP-OCRv4."""
+    try:
+        ocr = get_paddle_instance()
+        if ocr is None:
+            return ocr_page_tesseract(img_path, page_num)
+
+        result = ocr.ocr(img_path, cls=False)
+        if not result or not result[0]:
+            return {"text": "", "word_confidences": []}
+
+        boxes_data = []
+        for line in result[0]:
+            if not line or len(line) < 2:
+                continue
+            box = line[0]  # [ [x1,y1], [x2,y2], [x3,y3], [x4,y4] ]
+            text_score = line[1]
+            raw_text = str(text_score[0]).strip()
+            score = float(text_score[1])
+
+            if not raw_text:
+                continue
+
+            top_y = box[0][1]
+            left_x = box[0][0]
+
+            boxes_data.append({
+                "top": top_y,
+                "left": left_x,
+                "text": raw_text,
+                "conf": int(round(score * 100)),
+                "page": page_num
+            })
+
+        boxes_data.sort(key=lambda b: b["top"])
+
+        lines_grouped = []
+        current_line = []
+        current_y = None
+
+        for b in boxes_data:
+            if current_y is None:
+                current_y = b["top"]
+                current_line.append(b)
+            elif abs(b["top"] - current_y) <= 18:
+                current_line.append(b)
+            else:
+                current_line.sort(key=lambda x: x["left"])
+                lines_grouped.append(" ".join(x["text"] for x in current_line))
+                current_line = [b]
+                current_y = b["top"]
+
+        if current_line:
+            current_line.sort(key=lambda x: x["left"])
+            lines_grouped.append(" ".join(x["text"] for x in current_line))
+
+        word_confidences = [
+            {"text": b["text"], "conf": b["conf"], "page": page_num}
+            for b in boxes_data
+        ]
+
+        return {
+            "text": "\n".join(lines_grouped),
+            "word_confidences": word_confidences
+        }
+    except Exception as e:
+        sys.stderr.write(f"PaddleOCR error on page {page_num}, falling back to Tesseract: {str(e)}\n")
+        return ocr_page_tesseract(img_path, page_num)
+
+
 def extract_text_mode(pdf_path: str) -> str:
     try:
         result = subprocess.run(
@@ -172,10 +261,9 @@ def extract_text_mode(pdf_path: str) -> str:
         raise RuntimeError("pdftotext executable is not installed or not found in PATH.")
 
 
-def extract_ocr_mode(pdf_path: str, max_workers: int = 3) -> dict:
+def extract_ocr_mode(pdf_path: str, max_workers: int = 8, engine: str = "paddle") -> dict:
     temp_dir = tempfile.mkdtemp()
     try:
-        # Use pdftoppm -png -gray directly to generate compressed grayscale PNGs
         subprocess.run([
             "pdftoppm", "-png", "-gray", "-r", "300",
             pdf_path, os.path.join(temp_dir, "page")
@@ -194,12 +282,15 @@ def extract_ocr_mode(pdf_path: str, max_workers: int = 3) -> dict:
         full_text_parts = [None] * len(page_images)
         all_word_confidences = []
 
-        sys.stderr.write(f"OCR_PROGRESS: Toplam {len(page_images)} sayfa görsele dönüştürüldü (Workers: {workers}). OCR işlemi başlıyor...\n")
+        chosen_engine = "PaddleOCR" if (engine == "paddle" and HAS_PADDLE) else "Tesseract"
+        sys.stderr.write(f"OCR_PROGRESS: Toplam {len(page_images)} sayfa ({chosen_engine}, {workers} Worker). OCR işlemi başlıyor...\n")
         sys.stderr.flush()
+
+        worker_fn = ocr_page_paddle if (engine == "paddle" and HAS_PADDLE) else ocr_page_tesseract
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_index = {
-                executor.submit(ocr_page, img, idx + 1): idx
+                executor.submit(worker_fn, img, idx + 1): idx
                 for idx, img in enumerate(page_images)
             }
 
@@ -218,7 +309,8 @@ def extract_ocr_mode(pdf_path: str, max_workers: int = 3) -> dict:
         full_text = "\f".join([r for r in full_text_parts if r is not None])
         return {
             "text": full_text,
-            "word_confidences": all_word_confidences
+            "word_confidences": all_word_confidences,
+            "engine": chosen_engine
         }
 
     finally:
@@ -239,11 +331,12 @@ def process_text_to_lines(text: str) -> list:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="HBC Mutabakat PDF Barcode Extractor Engine (TSV Enhanced)")
+    parser = argparse.ArgumentParser(description="HBC Mutabakat Multi-Engine OCR Extractor (PaddleOCR / Tesseract)")
     parser.add_argument("--pdf", required=True, help="Path to the PDF file")
     parser.add_argument("--mode", choices=["text", "ocr"], default="ocr", help="Extraction mode")
+    parser.add_argument("--engine", choices=["paddle", "tesseract"], default="paddle", help="OCR Engine choice")
     parser.add_argument("--raw", action="store_true", help="Return raw text only without processing")
-    parser.add_argument("--workers", type=int, default=3, help="Max parallel OCR workers")
+    parser.add_argument("--workers", type=int, default=8, help="Max parallel OCR workers")
 
     args = parser.parse_args()
 
@@ -255,10 +348,12 @@ def main():
     start_time = time.time()
     try:
         word_confidences = []
+        engine_used = "text"
         if args.mode == "ocr":
-            ocr_result = extract_ocr_mode(args.pdf, max_workers=args.workers)
+            ocr_result = extract_ocr_mode(args.pdf, max_workers=args.workers, engine=args.engine)
             text = ocr_result["text"]
             word_confidences = ocr_result["word_confidences"]
+            engine_used = ocr_result.get("engine", args.engine)
         else:
             text = extract_text_mode(args.pdf)
 
@@ -267,6 +362,7 @@ def main():
             print(json.dumps({
                 "success": True,
                 "raw_text": text,
+                "engine": engine_used,
                 "word_confidences": word_confidences,
                 "elapsed_time": round(time.time() - start_time, 4)
             }, ensure_ascii=False))
@@ -279,6 +375,7 @@ def main():
         print(json.dumps({
             "success": True,
             "lines": pdf_lines,
+            "engine": engine_used,
             "word_confidences": word_confidences,
             "elapsed_time": round(elapsed, 4)
         }, ensure_ascii=False))
