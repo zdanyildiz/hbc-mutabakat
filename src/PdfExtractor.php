@@ -415,25 +415,17 @@ class PdfExtractor
             return null;
         }
 
-        $config = @include dirname(__DIR__) . '/config.php';
-        $workers = is_array($config) && isset($config['ocr_workers']) ? (int)$config['ocr_workers'] : 8;
-        $engine = is_array($config) && isset($config['ocr_engine']) ? (string)$config['ocr_engine'] : 'paddle';
-
         $pythonExecutable = 'python3';
         if (PHP_OS_FAMILY === 'Windows') {
             $pythonExecutable = 'python';
         } else {
-            if (file_exists('/opt/paddleocr_env/bin/python3')) {
-                $pythonExecutable = '/opt/paddleocr_env/bin/python3';
-            } else {
-                $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
-                if (trim($hasPython3) === '') {
-                    $pythonExecutable = 'python';
-                }
+            $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
+            if (trim($hasPython3) === '') {
+                $pythonExecutable = 'python';
             }
         }
 
-        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --engine ' . escapeshellarg($engine) . ' --workers ' . $workers . ' --pdf ' . escapeshellarg($filePath);
+        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
 
         $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live');
         if ($result === null) {
