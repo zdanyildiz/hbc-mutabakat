@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App;
 
 use Smalot\PdfParser\Parser;
-use thiagoalessio\TesseractOCR\TesseractOCR;
 
 class PdfExtractor
 {
@@ -26,30 +25,52 @@ class PdfExtractor
     private array $rawTextCache = [];
 
     /**
-     * @var array<string, array<array{barcode: ?string, barcode_fallback: ?string, store: ?string}>>
-     * In-memory cache for column-position based manifest table rows (Google Vision only).
+     * @var array<string, array<array{barcode: ?string, barcode_fallback: ?string, store: ?string, irsaliye_no?: ?string, sevk_id?: ?string, kargo_firma?: ?string}>>
+     * In-memory cache for manifest table rows from Google Document AI.
      */
     private array $manifestRowsCache = [];
 
-    private ?GoogleVisionClient $googleVisionClient = null;
+    /** @var array<string, array<string, string>> */
+    private array $docAiFormFieldsCache = [];
 
-    /** Maximum seconds to wait for subprocesses before terminating. */
-    private const PROCESS_TIMEOUT_SECONDS = 900;
+    private ?GoogleDocumentAiClient $googleDocumentAiClient = null;
 
-    public function __construct(?GoogleVisionClient $googleVisionClient = null)
+    public function __construct(?GoogleDocumentAiClient $googleDocumentAiClient = null)
     {
-        if ($googleVisionClient !== null) {
-            $this->googleVisionClient = $googleVisionClient;
+        if ($googleDocumentAiClient !== null) {
+            $this->googleDocumentAiClient = $googleDocumentAiClient;
         } else {
-            $apiKey = Env::get('GOOGLE_VISION_API_KEY');
-            if ($apiKey !== null && trim($apiKey) !== '' && $apiKey !== 'your_google_cloud_vision_api_key_here') {
+            $docAiProjectId = Env::get('GOOGLE_DOCAI_PROJECT_ID');
+            $docAiProcessorId = Env::get('GOOGLE_DOCAI_PROCESSOR_ID');
+            $docAiLocation = (string)(Env::get('GOOGLE_DOCAI_LOCATION') ?? 'eu');
+            $docAiApiKey = Env::get('GOOGLE_DOCAI_API_KEY') ?? Env::get('GOOGLE_VISION_API_KEY');
+            $docAiCreds = Env::get('GOOGLE_APPLICATION_CREDENTIALS');
+
+            if ($docAiProjectId !== null && trim($docAiProjectId) !== '' && $docAiProcessorId !== null && trim($docAiProcessorId) !== '') {
                 try {
-                    $this->googleVisionClient = new GoogleVisionClient($apiKey);
-                } catch (\Exception $e) {
-                    \App\Logger::log("[PdfExtractor] GoogleVisionClient başlatılamadı: " . $e->getMessage());
+                    $this->googleDocumentAiClient = new GoogleDocumentAiClient(
+                        $docAiProjectId,
+                        $docAiLocation,
+                        $docAiProcessorId,
+                        $docAiApiKey,
+                        $docAiCreds
+                    );
+                    \App\Logger::log("[PdfExtractor] Google Document AI Client başarıyla başlatıldı (Processor: {$docAiProcessorId})");
+                } catch (\Throwable $e) {
+                    \App\Logger::log("[PdfExtractor] Google Document AI başlatılamadı: " . $e->getMessage());
                 }
             }
         }
+    }
+
+    public function setGoogleDocumentAiClient(?GoogleDocumentAiClient $client): void
+    {
+        $this->googleDocumentAiClient = $client;
+    }
+
+    public function getGoogleDocumentAiClient(): ?GoogleDocumentAiClient
+    {
+        return $this->googleDocumentAiClient;
     }
 
     public function setUseOcr(bool $useOcr): void
@@ -83,12 +104,10 @@ class PdfExtractor
     }
 
     /**
-     * Returns the column-position based manifest table rows (barcode / barcode_fallback / store)
-     * for a PDF, if it was extracted via Google Cloud Vision (the underlying word bounding-box
-     * data is only available on that path). Requires extract() to have already run for this file
-     * in the current request; returns an empty array otherwise (e.g. Vision unavailable/disabled).
+     * Returns the manifest table rows (barcode / barcode_fallback / store / irsaliye / sevk / kargo)
+     * for a PDF, if it was extracted via Google Document AI.
      *
-     * @return array<array{barcode: ?string, barcode_fallback: ?string, store: ?string}>
+     * @return array<array{barcode: ?string, barcode_fallback: ?string, store: ?string, irsaliye_no?: ?string, sevk_id?: ?string, kargo_firma?: ?string}>
      */
     public function getManifestRows(string $filePath): array
     {
@@ -122,32 +141,23 @@ class PdfExtractor
             return $this->extractCache[$cacheKey];
         }
 
-        // 1. Google Cloud Vision OCR (Primary Cloud Engine if OCR enabled & API key set)
-        if ($this->useOcr && $this->googleVisionClient !== null) {
-            $googleResult = $this->extractWithGoogleVision($filePath);
-            if ($googleResult !== null && !empty($googleResult)) {
-                $this->extractCache[$cacheKey] = $googleResult;
-                return $googleResult;
-            }
-            \App\Logger::log("[PdfExtractor] Google Cloud Vision boş döndü veya hata oluştu, yerel motora geçiliyor...");
-        }
-
-        // 2. Python Backend (PaddleOCR / Tesseract Fallback)
-        $pythonResult = $this->extractWithPython($filePath, $mode);
-        if ($pythonResult !== null) {
-            $this->extractCache[$cacheKey] = $pythonResult;
-            return $pythonResult;
-        }
-
-        // 3. Fallback to native PHP extraction
+        // OCR Modunda YALNIZCA Google Cloud Document AI çalışır (Fallback motorlar devre dışı)
         if ($this->useOcr) {
-            $result = $this->extractOcrPhp($filePath);
-            $this->extractCache[$cacheKey] = $result;
-            return $result;
+            if ($this->googleDocumentAiClient === null) {
+                throw new \RuntimeException(
+                    "Google Cloud Document AI yapılandırılmamış veya başlatılamadı. " .
+                    "Lütfen .env dosyasında GOOGLE_DOCAI_PROJECT_ID ve GOOGLE_DOCAI_PROCESSOR_ID tanımlayın."
+                );
+            }
+
+            $docAiResult = $this->extractWithDocumentAi($filePath);
+            $this->extractCache[$cacheKey] = $docAiResult;
+            return $docAiResult;
         }
 
+        // Salt Metin Modu (OCR kapalıyken dijital PDF okuma)
         $pdfStart = microtime(true);
-        \App\Logger::log("[PdfExtractor-Text] PDF okuma başladı (PHP Fallback): " . basename($filePath));
+        \App\Logger::log("[PdfExtractor-Text] PDF okuma başladı: " . basename($filePath));
 
         $text = '';
         $usedPdftotext = false;
@@ -167,7 +177,7 @@ class PdfExtractor
         }
 
         if (!$usedPdftotext) {
-            \App\Logger::log("[PdfExtractor-Text] UYARI: pdftotext bulunamadı, Smalot PDF Parser fallback devreye giriyor.");
+            \App\Logger::log("[PdfExtractor-Text] UYARI: pdftotext bulunamadı, Smalot PDF Parser devreye giriyor.");
             $smalotStart = microtime(true);
             $parser = new Parser();
             try {
@@ -183,113 +193,72 @@ class PdfExtractor
 
         $barcodes = $this->processText($text);
         $elapsed = round(microtime(true) - $pdfStart, 4);
-        \App\Logger::log("[PdfExtractor-Text] Tamamlandı - Süre: {$elapsed} saniye | Benzersiz Barkod: " . count($barcodes));
+        \App\Logger::log("[PdfExtractor-Text] Tamamlandı - Süre: {$elapsed} saniye | Benzersiz Satır: " . count($barcodes));
 
         $this->extractCache[$cacheKey] = $barcodes;
         return $barcodes;
     }
 
     /**
-     * Extracts text from PDF using Google Cloud Vision API.
+     * Extracts structured text and tables from PDF using Google Cloud Document AI.
      *
      * @param string $filePath
-     * @return array<string>|null
+     * @return array<string>
+     * @throws \RuntimeException
      */
-    private function extractWithGoogleVision(string $filePath): ?array
+    private function extractWithDocumentAi(string $filePath): array
     {
-        if ($this->googleVisionClient === null) {
-            return null;
+        if ($this->googleDocumentAiClient === null) {
+            throw new \RuntimeException("Google Cloud Document AI istemcisi başlatılmamış.");
         }
 
         $start = microtime(true);
-        \App\Logger::log("[PdfExtractor-GoogleVision] Google Cloud Vision OCR başlıyor: " . basename($filePath));
-
-        $tempDir = dirname(__DIR__) . '/var/tmp';
-        if (!is_dir($tempDir)) {
-            @mkdir($tempDir, 0775, true);
-        }
-
-        $tempPrefix = $tempDir . '/gpage_' . uniqid();
-        $images = [];
+        \App\Logger::log("[PdfExtractor-DocumentAI] Google Cloud Document AI ayrıştırması başlıyor: " . basename($filePath));
 
         try {
-            // Render PDF pages to compressed grayscale PNGs (200 DPI is optimal for Google Vision).
-            // 300 DPI denendi: dogrulukta olcumu asan bir fark yaratmadi, sadece islem suresini
-            // ~3 kat artirdi (46sn -> 131sn) - fayda sifir, maliyet somut, 200'e geri alindi.
-            $checkPdftoppm = PHP_OS_FAMILY === 'Windows' ? 'where pdftoppm' : 'which pdftoppm';
-            $hasPdftoppm = (string)shell_exec($checkPdftoppm);
+            $docResult = $this->googleDocumentAiClient->processDocument($filePath, 'application/pdf');
 
-            if (trim($hasPdftoppm) !== '') {
-                $cmd = 'pdftoppm -png -gray -r 200 ' . escapeshellarg($filePath) . ' ' . escapeshellarg($tempPrefix);
-                shell_exec($cmd);
+            $cacheKey = md5($filePath . '_' . filemtime($filePath));
+            $this->manifestRowsCache[$cacheKey] = $docResult['rows'];
+            $this->docAiFormFieldsCache[$cacheKey] = $docResult['form_fields'];
 
-                $pattern = $tempPrefix . '-*.png';
-                $pageFiles = glob($pattern);
-                if ($pageFiles !== false && !empty($pageFiles)) {
-                    sort($pageFiles, SORT_NATURAL);
-                    $images = $pageFiles;
+            $lines = $docResult['lines'];
+
+            // Tablodan çıkarılan yapısal satırları da metin satırları olarak ekle (tam kapsama için)
+            foreach ($docResult['rows'] as $row) {
+                $rowParts = [];
+                if ($row['barcode'] !== null) {
+                    $rowParts[] = $row['barcode'];
+                }
+                if ($row['barcode_fallback'] !== null && $row['barcode_fallback'] !== $row['barcode']) {
+                    $rowParts[] = $row['barcode_fallback'];
+                }
+                if ($row['irsaliye_no'] !== null) {
+                    $rowParts[] = $row['irsaliye_no'];
+                }
+                if ($row['store'] !== null) {
+                    $rowParts[] = $row['store'];
+                }
+                if (!empty($rowParts)) {
+                    $lines[] = implode(' ', $rowParts);
                 }
             }
 
-            // Imagick fallback if pdftoppm did not produce images
-            if (empty($images) && class_exists('\Imagick')) {
-                $ping = new \Imagick();
-                $ping->pingImage($filePath);
-                $pageCount = $ping->getNumberImages();
-                $ping->clear();
-                $ping->destroy();
-
-                for ($i = 0; $i < $pageCount; $i++) {
-                    $img = new \Imagick();
-                    $img->setResolution(200, 200);
-                    $img->readImage($filePath . '[' . $i . ']');
-                    $img->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
-                    $img->setImageFormat('png');
-                    $outPath = $tempPrefix . '-' . ($i + 1) . '.png';
-                    $img->writeImage($outPath);
-                    $img->clear();
-                    $img->destroy();
-                    $images[] = $outPath;
-                }
-            }
-
-            if (empty($images)) {
-                \App\Logger::log("[PdfExtractor-GoogleVision] HATA: PDF sayfaları görsele dönüştürülemedi.");
-                return null;
-            }
-
-            $pagesFull = $this->googleVisionClient->annotateImagesFull($images);
-            $pageTexts = [];
-            $pagesWords = [];
-            foreach ($pagesFull as $idx => $pageData) {
-                $pageTexts[$idx] = $pageData['text'];
-                $pagesWords[$idx] = $pageData['words'];
-            }
-            $fullText = implode("\f", $pageTexts);
-
-            try {
-                $manifestExtractor = new ManifestColumnExtractor();
-                $cacheKey = md5($filePath . '_' . filemtime($filePath));
-                $this->manifestRowsCache[$cacheKey] = $manifestExtractor->extractRows($pagesWords);
-                \App\Logger::log("[PdfExtractor-GoogleVision] Sütun tabanlı tablo ayrıştırma: " . count($this->manifestRowsCache[$cacheKey]) . " satır bulundu.");
-            } catch (\Throwable $e) {
-                \App\Logger::log("[PdfExtractor-GoogleVision] Sütun tabanlı ayrıştırma HATA: " . $e->getMessage());
-            }
-
+            $processedLines = $this->processText(implode("\n", $lines));
             $elapsed = round(microtime(true) - $start, 4);
-            $lines = $this->processText($fullText);
-            \App\Logger::log("[PdfExtractor-GoogleVision] Başarıyla tamamlandı - Toplam Sayfa: " . count($images) . " | Süre: {$elapsed} saniye | Çıkarılan Satır: " . count($lines));
 
-            return $lines;
+            \App\Logger::log(sprintf(
+                "[PdfExtractor-DocumentAI] Başarıyla tamamlandı - Sayfa: %d | Yapısal Satır: %d | Toplam Satır: %d | Süre: %s sn",
+                $docResult['page_count'],
+                count($docResult['rows']),
+                count($processedLines),
+                (string)$elapsed
+            ));
+
+            return $processedLines;
         } catch (\Throwable $e) {
-            \App\Logger::log("[PdfExtractor-GoogleVision] HATA: " . $e->getMessage());
-            return null;
-        } finally {
-            foreach ($images as $img) {
-                if (file_exists($img)) {
-                    @unlink($img);
-                }
-            }
+            \App\Logger::log("[PdfExtractor-DocumentAI] HATA: " . $e->getMessage());
+            throw new \RuntimeException("Google Cloud Document AI İşlem Hatası: " . $e->getMessage(), (int)$e->getCode(), $e);
         }
     }
 
@@ -304,6 +273,20 @@ class PdfExtractor
     {
         if (!file_exists($filePath)) {
             return 'Bilinmeyen Mağaza';
+        }
+
+        $cacheKey = md5($filePath . '_' . filemtime($filePath));
+        if (isset($this->docAiFormFieldsCache[$cacheKey])) {
+            $fields = $this->docAiFormFieldsCache[$cacheKey];
+            foreach ($fields as $key => $val) {
+                $k = mb_strtolower($key, 'UTF-8');
+                if (str_contains($k, 'mağaza') || str_contains($k, 'magaza')) {
+                    $cleanVal = trim($val);
+                    if ($cleanVal !== '') {
+                        return $cleanVal;
+                    }
+                }
+            }
         }
 
         $parser = new Parser();
@@ -443,254 +426,6 @@ class PdfExtractor
     }
 
     /**
-     * Tries to extract barcodes using the Python backend.
-     *
-     * @param string $filePath
-     * @param string $mode
-     * @return array<string>|null
-     */
-    private function extractWithPython(string $filePath, string $mode): ?array
-    {
-        $pythonScript = dirname(__DIR__) . '/src/reconcile.py';
-        if (!file_exists($pythonScript)) {
-            return null;
-        }
-
-        $pythonExecutable = 'python3';
-        if (PHP_OS_FAMILY === 'Windows') {
-            $pythonExecutable = 'python';
-        } else {
-            $hasPython3 = (string)shell_exec('which python3 2>/dev/null');
-            if (trim($hasPython3) === '') {
-                $pythonExecutable = 'python';
-            }
-        }
-
-        $cmd = $pythonExecutable . ' ' . escapeshellarg($pythonScript) . ' --mode ' . escapeshellarg($mode) . ' --pdf ' . escapeshellarg($filePath);
-
-        $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live');
-        if ($result === null) {
-            \App\Logger::log("[PdfExtractor-Python] HATA: Süreç başlatılamadı.");
-            return null;
-        }
-
-        if ($result['timed_out']) {
-            \App\Logger::log("[PdfExtractor-Python] HATA: İşlem " . self::PROCESS_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
-            return null;
-        }
-
-        /** @var array{success?: bool, lines?: array<string>, elapsed_time?: float}|null $data */
-        $data = json_decode(trim($result['stdout']), true);
-        if (is_array($data) && isset($data['success']) && $data['success'] === true) {
-            $this->barcodeToOriginalMap = [];
-            $this->mismatches = [];
-
-            $timeLog = isset($data['elapsed_time']) ? "Süre: {$data['elapsed_time']} sn" : "";
-            \App\Logger::log("[PdfExtractor-Python] Başarıyla tamamlandı - Mod: {$mode} | {$timeLog}");
-
-            return $data['lines'] ?? [];
-        }
-
-        \App\Logger::log("[PdfExtractor-Python] Hata veya uyumsuz çıktı: " . trim(substr($result['stdout'], 0, 200)));
-        return null;
-    }
-
-    /**
-     * Runs a shell command via proc_open.
-     *
-     * @param string $cmd
-     * @param string $liveLogPrefix
-     * @return array{stdout: string, stderr: string, timed_out: bool}|null
-     */
-    private function runProcessWithTimeout(string $cmd, string $liveLogPrefix): ?array
-    {
-        $descriptorspec = [
-            0 => ["pipe", "r"],
-            1 => ["pipe", "w"],
-            2 => ["pipe", "w"]
-        ];
-
-        $process = proc_open($cmd, $descriptorspec, $pipes);
-        if (!is_resource($process)) {
-            return null;
-        }
-
-        stream_set_blocking($pipes[1], false);
-        stream_set_blocking($pipes[2], false);
-
-        $stdoutData = '';
-        $stderrData = '';
-        $timedOut = false;
-        $startTime = microtime(true);
-
-        while (true) {
-            $read = [$pipes[1], $pipes[2]];
-            $write = null;
-            $except = null;
-
-            $numChanged = stream_select($read, $write, $except, 0, 200000);
-            if ($numChanged === false) {
-                break;
-            }
-
-            $hasRead = false;
-            if ($numChanged > 0) {
-                foreach ($read as $stream) {
-                    if ($stream === $pipes[1]) {
-                        $chunk = fread($pipes[1], 8192);
-                        if ($chunk !== false && $chunk !== '') {
-                            $stdoutData .= $chunk;
-                            $hasRead = true;
-                        }
-                    } elseif ($stream === $pipes[2]) {
-                        $chunk = fread($pipes[2], 8192);
-                        if ($chunk !== false && $chunk !== '') {
-                            $stderrData .= $chunk;
-                            $hasRead = true;
-                            $lines = explode("\n", $chunk);
-                            foreach ($lines as $line) {
-                                $line = trim($line);
-                                if ($line !== '') {
-                                    if (str_contains($line, 'OCR_PROGRESS:')) {
-                                        $cleanLog = str_replace('OCR_PROGRESS:', '', $line);
-                                        \App\Logger::log("[{$liveLogPrefix}]" . $cleanLog);
-                                    } else {
-                                        \App\Logger::log("[{$liveLogPrefix}-Stderr] " . $line);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            $status = proc_get_status($process);
-            if (!$status['running']) {
-                while (($chunk = fread($pipes[1], 8192)) !== '' && $chunk !== false) {
-                    $stdoutData .= $chunk;
-                }
-                while (($chunk = fread($pipes[2], 8192)) !== '' && $chunk !== false) {
-                    $stderrData .= $chunk;
-                }
-                break;
-            }
-
-            if ((microtime(true) - $startTime) > self::PROCESS_TIMEOUT_SECONDS) {
-                $timedOut = true;
-                proc_terminate($process, 9);
-                break;
-            }
-
-            if ($numChanged === 0 && !$hasRead) {
-                usleep(10000);
-            }
-        }
-
-        fclose($pipes[0]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-        proc_close($process);
-
-        return ['stdout' => $stdoutData, 'stderr' => $stderrData, 'timed_out' => $timedOut];
-    }
-
-    /**
-     * Native PHP OCR fallback using Imagick + Tesseract.
-     *
-     * @param string $filePath
-     * @return array<string>
-     * @throws \RuntimeException
-     */
-    private function extractOcrPhp(string $filePath): array
-    {
-        if (!class_exists('\Imagick')) {
-            throw new \RuntimeException("PDF görsel dönüşümü için 'Imagick' PHP eklentisi kurulu olmalıdır.");
-        }
-
-        $ocrStart = microtime(true);
-        \App\Logger::log("[PdfExtractor-OCR] OCR işlemi başladı (PHP Fallback): " . basename($filePath));
-
-        $images = [];
-        $tempDir = dirname(__DIR__) . '/var/tmp';
-        if (!is_dir($tempDir)) {
-            @mkdir($tempDir, 0775, true);
-        }
-
-        try {
-            $pingImagick = new \Imagick();
-            $pingImagick->pingImage($filePath);
-            $pageCount = $pingImagick->getNumberImages();
-            $pingImagick->clear();
-            $pingImagick->destroy();
-
-            \App\Logger::log("[PdfExtractor-OCR] Toplam Sayfa Sayısı: {$pageCount}");
-
-            for ($i = 0; $i < $pageCount; $i++) {
-                $pageStart = microtime(true);
-                $pageImagick = new \Imagick();
-                $pageImagick->setResolution(300, 300);
-                $pageImagick->readImage($filePath . '[' . $i . ']');
-                $pageImagick->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
-                // @phpstan-ignore-next-line
-                $pageImagick->levelImage(0.25 * \Imagick::getQuantum(), 1.0, 0.75 * \Imagick::getQuantum());
-                $pageImagick->thresholdImage(0.5 * \Imagick::getQuantum());
-                $pageImagick->setImageFormat('png');
-
-                $pagePath = $tempDir . '/page_' . uniqid() . '_' . $i . '.png';
-                $pageImagick->writeImage($pagePath);
-                $images[] = $pagePath;
-
-                $pageImagick->clear();
-                $pageImagick->destroy();
-
-                $pageElapsed = round(microtime(true) - $pageStart, 4);
-                \App\Logger::log("[PdfExtractor-OCR] Sayfa {$i} görsele çevrildi - Süre: {$pageElapsed} saniye");
-            }
-        } catch (\Exception $e) {
-            \App\Logger::log("[PdfExtractor-OCR] Imagick HATA: " . $e->getMessage());
-            foreach ($images as $img) {
-                if (file_exists($img)) {
-                    @unlink($img);
-                }
-            }
-            throw new \RuntimeException("PDF görsele dönüştürülürken hata oluştu: " . $e->getMessage());
-        }
-
-        $allText = '';
-
-        foreach ($images as $index => $pagePath) {
-            try {
-                $tessStart = microtime(true);
-                $ocr = new TesseractOCR($pagePath);
-                // @phpstan-ignore-next-line
-                $ocr->lang('tur', 'eng');
-                // @phpstan-ignore-next-line
-                $ocr->psm(3);
-                $text = $ocr->run();
-
-                if (file_exists($pagePath)) {
-                    @unlink($pagePath);
-                }
-
-                $tessElapsed = round(microtime(true) - $tessStart, 4);
-                \App\Logger::log("[PdfExtractor-OCR] Sayfa {$index} Tesseract okuması bitti - Süre: {$tessElapsed} saniye");
-                $allText .= $text . "\n";
-            } catch (\Exception $e) {
-                \App\Logger::log("[PdfExtractor-OCR] UYARI: Sayfa {$index} okunamadı - Hata: " . $e->getMessage());
-                if (file_exists($pagePath)) {
-                    @unlink($pagePath);
-                }
-            }
-        }
-
-        $barcodes = $this->processText($allText);
-        $elapsed = round(microtime(true) - $ocrStart, 4);
-        \App\Logger::log("[PdfExtractor-OCR] Tamamlandı - Toplam Süre: {$elapsed} saniye | Benzersiz Barkod: " . count($barcodes));
-
-        return $barcodes;
-    }
-
-    /**
      * Process text lines and skip empty lines.
      *
      * @param string $text
@@ -741,7 +476,6 @@ class PdfExtractor
                 $this->rawTextCache[$cacheKey] = $text;
                 return $text;
             } catch (\Exception $e) {
-                // Fallback to pdftotext
                 $output = shell_exec('pdftotext -layout ' . escapeshellarg($filePath) . ' -');
                 if ($output !== null && $output !== false) {
                     $this->rawTextCache[$cacheKey] = (string)$output;
