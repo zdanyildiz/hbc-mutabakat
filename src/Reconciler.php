@@ -348,8 +348,9 @@ class Reconciler
                     // Birebir (önceki aşamalar OCR gürültüsü yüzünden atlamış olabilir).
                     $class = 'match';
                 } elseif ($cmp['hard'] === 0 && $cmp['soft'] <= self::MAX_SOFT_GLYPH) {
-                    // Tüm farklar bilinen glif karışması → güçlü şüpheli eşleşme (asıl kazanç).
-                    $class = 'suspect';
+                    // Tüm farklar bilinen glif karışması (gerçek/açıklanamayan hata YOK) →
+                    // kanıtlı OCR hatası sayılır, otomatik eşleşme olarak kabul edilir.
+                    $class = 'match';
                 } elseif ($cmp['hard'] >= 1 && $cmp['cost'] <= self::SUSPECT_COST_BUDGET) {
                     // Az sayıda gerçek hata + olası glif → şüpheli eşleşme.
                     $class = 'suspect';
@@ -380,7 +381,11 @@ class Reconciler
             if ($bestClass === 'match') {
                 $matchedText[] = $missingBarcode;
                 $matched[] = $missingBarcode;
-                \App\Logger::log("[Reconciler-Fuzzy] Tam Eşleşme (Mesafe 0) Bulundu: " . $missingBarcode);
+                if ($bestDiff === 0) {
+                    \App\Logger::log("[Reconciler-Fuzzy] Tam Eşleşme (Mesafe 0) Bulundu: " . $missingBarcode);
+                } else {
+                    \App\Logger::log("[Reconciler-Fuzzy] Glif Düzeltmesiyle Eşleşti (Gerçek hata: 0, Glif farkı: " . $bestDiff . "): " . $missingBarcode . " <-> " . $bestStore);
+                }
             } else {
                 $suspectedMatches[] = [
                     'terminal_barcode' => $missingBarcode,
