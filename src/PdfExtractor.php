@@ -189,12 +189,13 @@ class PdfExtractor
         $images = [];
 
         try {
-            // Render PDF pages to compressed grayscale PNGs (200 DPI is optimal for Google Vision)
+            // Render PDF pages to compressed grayscale PNGs (300 DPI: kucuk/dusuk kontrastli
+            // barkodlarin Vision tarafindan tamamen atlanmasini azaltmak icin 200'den yukseltildi)
             $checkPdftoppm = PHP_OS_FAMILY === 'Windows' ? 'where pdftoppm' : 'which pdftoppm';
             $hasPdftoppm = (string)shell_exec($checkPdftoppm);
 
             if (trim($hasPdftoppm) !== '') {
-                $cmd = 'pdftoppm -png -gray -r 200 ' . escapeshellarg($filePath) . ' ' . escapeshellarg($tempPrefix);
+                $cmd = 'pdftoppm -png -gray -r 300 ' . escapeshellarg($filePath) . ' ' . escapeshellarg($tempPrefix);
                 shell_exec($cmd);
 
                 $pattern = $tempPrefix . '-*.png';
@@ -215,7 +216,7 @@ class PdfExtractor
 
                 for ($i = 0; $i < $pageCount; $i++) {
                     $img = new \Imagick();
-                    $img->setResolution(200, 200);
+                    $img->setResolution(300, 300);
                     $img->readImage($filePath . '[' . $i . ']');
                     $img->transformImageColorspace(\Imagick::COLORSPACE_GRAY);
                     $img->setImageFormat('png');
