@@ -8,9 +8,9 @@ use App\PdfExtractor;
 
 \App\Env::load(dirname(__DIR__));
 
-$pdfPath = 'C:\\Users\\zdany\\Downloads\\wetransfer_yeni-klasor-3_2026-08-18_1418\\Yeni klasör (3)\\T285.pdf';
+$pdfPath = $argv[1] ?? (file_exists(dirname(__DIR__) . '/T285.pdf') ? dirname(__DIR__) . '/T285.pdf' : 'C:\\Users\\zdany\\Downloads\\wetransfer_yeni-klasor-3_2026-08-18_1418\\Yeni klasör (3)\\T285.pdf');
 
-echo "=== CANLI TEST: T285.pdf Google Document AI Ayrıştırması ===\n";
+echo "=== CANLI TEST: Google Document AI Ayrıştırması ===\n";
 echo "Dosya: {$pdfPath}\n";
 
 $extractor = new PdfExtractor();
