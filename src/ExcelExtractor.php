@@ -139,4 +139,99 @@ class ExcelExtractor
 
         return $map;
     }
+
+    /**
+     * Extracts detailed row information including barcode, invoice number, and store.
+     *
+     * @param string $filePath
+     * @return array<int, array{row: int, barcode: ?string, customer_barcode: ?string, irsaliye_no: ?string, store: string}>
+     * @throws \InvalidArgumentException|\RuntimeException
+     */
+    public function extractRowsDetails(string $filePath): array
+    {
+        if (!file_exists($filePath)) {
+            throw new \InvalidArgumentException("Excel/CSV dosyası bulunamadı: {$filePath}");
+        }
+
+        \PhpOffice\PhpSpreadsheet\Cell\Cell::setValueBinder(new \PhpOffice\PhpSpreadsheet\Cell\StringValueBinder());
+
+        try {
+            $spreadsheet = IOFactory::load($filePath);
+            $worksheet = $spreadsheet->getActiveSheet();
+        } catch (\Exception $e) {
+            throw new \RuntimeException("Excel/CSV dosyası yüklenirken hata oluştu: " . $e->getMessage());
+        }
+
+        $details = [];
+
+        foreach ($worksheet->getRowIterator() as $rowIndex => $row) {
+            if ($rowIndex === 1) {
+                continue; // Skip header
+            }
+
+            $getVal = function (string $col) use ($worksheet, $rowIndex): string {
+                $cell = $worksheet->getCell($col . $rowIndex);
+                $val = $cell->getValue();
+                if (is_scalar($val)) {
+                    return trim((string)$val);
+                }
+                if ($val instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
+                    return trim($val->getPlainText());
+                }
+                return '';
+            };
+
+            $barcodeRaw = $getVal('A');
+            $customerBarcodeRaw = $getVal('B');
+            $irsaliyeRaw = $getVal('C');
+            $storeRaw = $getVal('F');
+
+            $cleanBarcode = preg_replace('/\D/', '', $barcodeRaw);
+            if (!is_string($cleanBarcode) || strlen($cleanBarcode) < 5) {
+                $cleanBarcode = null;
+            }
+
+            $cleanCustomerBarcode = preg_replace('/\D/', '', $customerBarcodeRaw);
+            if (!is_string($cleanCustomerBarcode) || strlen($cleanCustomerBarcode) < 5) {
+                $cleanCustomerBarcode = null;
+            }
+
+            $cleanIrsaliye = trim($irsaliyeRaw);
+            if ($cleanIrsaliye === '' || $cleanIrsaliye === '-' || strlen($cleanIrsaliye) < 4) {
+                $cleanIrsaliye = null;
+            }
+
+            if ($storeRaw === '') {
+                $storeRaw = "[Mağaza Adı Belirtilmemiş (Satır {$rowIndex})]";
+            }
+
+            $details[] = [
+                'row' => $rowIndex,
+                'barcode' => $cleanBarcode,
+                'customer_barcode' => $cleanCustomerBarcode,
+                'irsaliye_no' => $cleanIrsaliye,
+                'store' => $storeRaw,
+            ];
+        }
+
+        return $details;
+    }
+
+    /**
+     * Returns a map of barcode => clean invoice number.
+     *
+     * @param string $filePath
+     * @return array<string, string>
+     */
+    public function extractBarcodeToInvoiceMap(string $filePath): array
+    {
+        $details = $this->extractRowsDetails($filePath);
+        $map = [];
+        foreach ($details as $d) {
+            if ($d['barcode'] !== null && $d['irsaliye_no'] !== null) {
+                $map[$d['barcode']] = $d['irsaliye_no'];
+            }
+        }
+        return $map;
+    }
 }

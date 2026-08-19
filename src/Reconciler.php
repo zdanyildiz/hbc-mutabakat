@@ -260,6 +260,95 @@ class Reconciler
             $missingInStore = $stillMissingAfterExact;
         }
 
+        // 4. Aşama: İrsaliye Numarası Tabanlı Eşleştirme (Invoice Matching)
+        // Excel'de barkodu eksik/deforme olan veya OCR'da barkodu silik kalmış ancak
+        // İrsaliye Numarası PDF'te yer alan kolileri eşleştirir.
+        $barcodeToInvoiceMap = $this->excelExtractor->extractBarcodeToInvoiceMap($excelPath);
+
+        if (!empty($missingInStore) && !empty($barcodeToInvoiceMap)) {
+            $allPdfRawLinesForInvoice = [];
+            foreach ($pdfPaths as $pdfPath) {
+                try {
+                    $rawText = $this->pdfExtractor->extractRawText($pdfPath, 'text');
+                    $lines = explode("\n", str_replace("\r", "", str_replace("\f", "\n", $rawText)));
+                    foreach ($lines as $line) {
+                        $trimmed = trim($line);
+                        if ($trimmed !== '') {
+                            $allPdfRawLinesForInvoice[] = $trimmed;
+                        }
+                    }
+                } catch (\Exception $e) {
+                    // Ham metin alınamazsa devam et
+                }
+            }
+
+            $allInvoiceSearchLines = array_merge($pdfLines, $allPdfRawLinesForInvoice);
+
+            // PDF satırlarını boşluksuz ve normalize ederek arama havuzuna alalım
+            $normalizedPdfLines = [];
+            foreach ($allInvoiceSearchLines as $lIdx => $lText) {
+                $clean = strtoupper((string)preg_replace('/[\s\-\_\.\,\:\;\/]+/u', '', $lText));
+                if ($clean !== '') {
+                    $normalizedPdfLines[$lIdx] = $clean;
+                }
+            }
+
+            $stillMissingAfterInvoice = [];
+            foreach ($missingInStore as $missingBarcode) {
+                $invoiceNo = $barcodeToInvoiceMap[$missingBarcode] ?? null;
+                if ($invoiceNo === null || trim($invoiceNo) === '') {
+                    $stillMissingAfterInvoice[] = $missingBarcode;
+                    continue;
+                }
+
+                $cleanInv = strtoupper((string)preg_replace('/[\s\-\_\.\,\:\;\/]+/u', '', $invoiceNo));
+                if (strlen($cleanInv) < 6) {
+                    $stillMissingAfterInvoice[] = $missingBarcode;
+                    continue;
+                }
+
+                // İrsaliye varyasyonları (OCR harf/rakam karışıklıkları)
+                $invVariations = [$cleanInv];
+                $invVariations[] = strtr($cleanInv, ['LM1' => 'LMI', '1AC' => 'IAC', 'LLI' => 'LL1']);
+                $invVariations[] = strtr($cleanInv, ['LMI' => 'LM1', 'IAC' => '1AC', 'LL1' => 'LLI', '111' => 'LLI']);
+                $invVariations[] = strtr($cleanInv, ['I' => '1', 'L' => '1', 'O' => '0']);
+                $invVariations = array_values(array_unique($invVariations));
+
+                $digitsOnlyInv = preg_replace('/\D/', '', $cleanInv);
+                $invSuffix = (is_string($digitsOnlyInv) && strlen($digitsOnlyInv) >= 8) ? substr($digitsOnlyInv, -10) : null;
+
+                $invoiceMatched = false;
+                foreach ($normalizedPdfLines as $lIdx => $normLine) {
+                    $matchedVar = false;
+                    foreach ($invVariations as $var) {
+                        if (str_contains($normLine, $var)) {
+                            $matchedVar = true;
+                            break;
+                        }
+                    }
+
+                    if (!$matchedVar && $invSuffix !== null && strlen($invSuffix) >= 8) {
+                        if (str_contains($normLine, $invSuffix)) {
+                            $matchedVar = true;
+                        }
+                    }
+
+                    if ($matchedVar) {
+                        $matchedText[] = $missingBarcode;
+                        $invoiceMatched = true;
+                        unset($normalizedPdfLines[$lIdx]);
+                        \App\Logger::log("[Reconciler-InvoiceSearch] Eksik Barkod İrsaliye Numarasıyla Eşleşti: Barkod: " . $missingBarcode . " | İrsaliye: " . $invoiceNo);
+                        break;
+                    }
+                }
+
+                if (!$invoiceMatched) {
+                    $stillMissingAfterInvoice[] = $missingBarcode;
+                }
+            }
+            $missingInStore = $stillMissingAfterInvoice;
+        }
+
         $matched = array_merge($matchedOcr, $matchedText);
 
         // Fazla kolileri filtrele (Kalan satırlardaki gerçek barkodları ayıklıyoruz)
