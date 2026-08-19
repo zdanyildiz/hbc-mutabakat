@@ -25,6 +25,12 @@ class PdfExtractor
     /** @var array<string, string> In-memory cache for raw text */
     private array $rawTextCache = [];
 
+    /**
+     * @var array<string, array<array{barcode: ?string, barcode_fallback: ?string, store: ?string}>>
+     * In-memory cache for column-position based manifest table rows (Google Vision only).
+     */
+    private array $manifestRowsCache = [];
+
     private ?GoogleVisionClient $googleVisionClient = null;
 
     /** Maximum seconds to wait for subprocesses before terminating. */
@@ -74,6 +80,24 @@ class PdfExtractor
     public function getMismatches(): array
     {
         return $this->mismatches;
+    }
+
+    /**
+     * Returns the column-position based manifest table rows (barcode / barcode_fallback / store)
+     * for a PDF, if it was extracted via Google Cloud Vision (the underlying word bounding-box
+     * data is only available on that path). Requires extract() to have already run for this file
+     * in the current request; returns an empty array otherwise (e.g. Vision unavailable/disabled).
+     *
+     * @return array<array{barcode: ?string, barcode_fallback: ?string, store: ?string}>
+     */
+    public function getManifestRows(string $filePath): array
+    {
+        if (!file_exists($filePath)) {
+            return [];
+        }
+
+        $cacheKey = md5($filePath . '_' . filemtime($filePath));
+        return $this->manifestRowsCache[$cacheKey] ?? [];
     }
 
     /**
@@ -233,8 +257,23 @@ class PdfExtractor
                 return null;
             }
 
-            $pageTexts = $this->googleVisionClient->annotateImages($images);
+            $pagesFull = $this->googleVisionClient->annotateImagesFull($images);
+            $pageTexts = [];
+            $pagesWords = [];
+            foreach ($pagesFull as $idx => $pageData) {
+                $pageTexts[$idx] = $pageData['text'];
+                $pagesWords[$idx] = $pageData['words'];
+            }
             $fullText = implode("\f", $pageTexts);
+
+            try {
+                $manifestExtractor = new ManifestColumnExtractor();
+                $cacheKey = md5($filePath . '_' . filemtime($filePath));
+                $this->manifestRowsCache[$cacheKey] = $manifestExtractor->extractRows($pagesWords);
+                \App\Logger::log("[PdfExtractor-GoogleVision] Sütun tabanlı tablo ayrıştırma: " . count($this->manifestRowsCache[$cacheKey]) . " satır bulundu.");
+            } catch (\Throwable $e) {
+                \App\Logger::log("[PdfExtractor-GoogleVision] Sütun tabanlı ayrıştırma HATA: " . $e->getMessage());
+            }
 
             $elapsed = round(microtime(true) - $start, 4);
             $lines = $this->processText($fullText);

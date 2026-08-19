@@ -25,6 +25,25 @@ class GoogleVisionClient
      */
     public function annotateImages(array $imagePaths): array
     {
+        $full = $this->annotateImagesFull($imagePaths);
+        $results = [];
+        foreach ($full as $idx => $page) {
+            $results[$idx] = $page['text'];
+        }
+        return $results;
+    }
+
+    /**
+     * Performs parallel asynchronous DOCUMENT_TEXT_DETECTION OCR on multiple image file paths
+     * and returns, per page, both the flat reconstructed text AND the word-level bounding-box
+     * data already present in the same API response (no extra cost/latency vs annotateImages()).
+     *
+     * @param array<string> $imagePaths Array of absolute paths to page image files.
+     * @return array<int, array{text: string, words: array<array{text: string, cx: float, cy: float}>}>
+     * @throws \RuntimeException
+     */
+    public function annotateImagesFull(array $imagePaths): array
+    {
         if (empty($imagePaths)) {
             return [];
         }
@@ -37,7 +56,6 @@ class GoogleVisionClient
 
         // Process in batches of 16 to avoid exceeding Google request payload limits while keeping maximum speed
         $chunks = array_chunk($imagePaths, 16, true);
-        $globalIndex = 0;
 
         foreach ($chunks as $chunk) {
             $mh = curl_multi_init();
@@ -108,36 +126,31 @@ class GoogleVisionClient
 
                 if ($err !== '') {
                     \App\Logger::log("[GoogleVision] Sayfa {$idx} cURL Hatası: {$err}");
-                    $results[$idx] = '';
+                    $results[$idx] = ['text' => '', 'words' => []];
                     continue;
                 }
 
                 if ($httpCode !== 200) {
                     \App\Logger::log("[GoogleVision] Sayfa {$idx} HTTP Hata {$httpCode}: " . substr((string)$response, 0, 300));
-                    $results[$idx] = '';
+                    $results[$idx] = ['text' => '', 'words' => []];
                     continue;
                 }
 
-                /** @var array{
-                 *     responses?: array<array{
-                 *         fullTextAnnotation?: array{text: string},
-                 *         error?: array{message: string}
-                 *     }>
-                 * }|null $data
-                 */
                 $data = json_decode((string)$response, true);
                 if (is_array($data) && isset($data['responses'][0])) {
                     $pageResp = $data['responses'][0];
                     if (isset($pageResp['error'])) {
                         \App\Logger::log("[GoogleVision] Sayfa {$idx} API Hatası: " . $pageResp['error']['message']);
-                        $results[$idx] = '';
+                        $results[$idx] = ['text' => '', 'words' => []];
                     } else {
-                        $extractedText = $pageResp['fullTextAnnotation']['text'] ?? '';
-                        $results[$idx] = $extractedText;
-                        \App\Logger::log("[GoogleVision] Sayfa " . ($idx + 1) . " OCR tamamlandı (" . strlen($extractedText) . " karakter)");
+                        $fta = $pageResp['fullTextAnnotation'] ?? [];
+                        $extractedText = $fta['text'] ?? '';
+                        $words = $this->extractWords($fta);
+                        $results[$idx] = ['text' => $extractedText, 'words' => $words];
+                        \App\Logger::log("[GoogleVision] Sayfa " . ($idx + 1) . " OCR tamamlandı (" . strlen($extractedText) . " karakter, " . count($words) . " kelime)");
                     }
                 } else {
-                    $results[$idx] = '';
+                    $results[$idx] = ['text' => '', 'words' => []];
                 }
             }
 
@@ -146,5 +159,54 @@ class GoogleVisionClient
 
         ksort($results);
         return $results;
+    }
+
+    /**
+     * Walks the fullTextAnnotation's pages -> blocks -> paragraphs -> words hierarchy and
+     * flattens it into a simple list of {text, cx, cy} entries (word text + bounding-box
+     * center in absolute pixel coordinates of the rendered page image).
+     *
+     * @param array<mixed> $fullTextAnnotation
+     * @return array<array{text: string, cx: float, cy: float}>
+     */
+    private function extractWords(array $fullTextAnnotation): array
+    {
+        $words = [];
+
+        foreach (($fullTextAnnotation['pages'] ?? []) as $page) {
+            foreach (($page['blocks'] ?? []) as $block) {
+                foreach (($block['paragraphs'] ?? []) as $paragraph) {
+                    foreach (($paragraph['words'] ?? []) as $word) {
+                        $wordText = '';
+                        foreach (($word['symbols'] ?? []) as $symbol) {
+                            $wordText .= $symbol['text'] ?? '';
+                        }
+                        if ($wordText === '') {
+                            continue;
+                        }
+
+                        $vertices = $word['boundingBox']['vertices'] ?? [];
+                        if (empty($vertices)) {
+                            continue;
+                        }
+
+                        $xs = [];
+                        $ys = [];
+                        foreach ($vertices as $vertex) {
+                            $xs[] = (float)($vertex['x'] ?? 0);
+                            $ys[] = (float)($vertex['y'] ?? 0);
+                        }
+
+                        $words[] = [
+                            'text' => $wordText,
+                            'cx' => array_sum($xs) / max(1, count($xs)),
+                            'cy' => array_sum($ys) / max(1, count($ys)),
+                        ];
+                    }
+                }
+            }
+        }
+
+        return $words;
     }
 }

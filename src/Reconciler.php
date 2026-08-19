@@ -247,6 +247,41 @@ class Reconciler
 
         $matched = array_merge($matchedOcr, $matchedText);
 
+        // 4. Aşama: Sütun konumu (x,y) tabanlı tablo ayrıştırmasından gelen barkod havuzu.
+        // Google Vision'ın kelime bazlı bounding-box verisiyle, "Tema Takip No" (2. sütun)
+        // ve "KargoTakipNo" (9. sütun, aynı barkodun tekrarı) sütunları konumdan ayırt
+        // edilerek çıkarılır. Serbest metin taramasının (1-3. aşamalar) satır kırılması
+        // yanlış olduğunda kaçırabileceği barkodları, sütun konumuna dayandığı için daha
+        // güvenilir biçimde kurtarır. Sadece Google Vision ile işlenen PDF'lerde veri üretir;
+        // aksi halde havuz boş kalır ve bu aşama sessizce atlanır.
+        if (!empty($missingInStore)) {
+            $manifestBarcodePool = [];
+            foreach ($pdfPaths as $pdfPath) {
+                foreach ($this->pdfExtractor->getManifestRows($pdfPath) as $row) {
+                    if (!empty($row['barcode'])) {
+                        $manifestBarcodePool[$row['barcode']] = true;
+                    }
+                    if (!empty($row['barcode_fallback'])) {
+                        $manifestBarcodePool[$row['barcode_fallback']] = true;
+                    }
+                }
+            }
+
+            if (!empty($manifestBarcodePool)) {
+                $stillMissingAfterColumn = [];
+                foreach ($missingInStore as $missingBarcode) {
+                    if (isset($manifestBarcodePool[$missingBarcode])) {
+                        $matchedText[] = $missingBarcode;
+                        $matched[] = $missingBarcode;
+                        \App\Logger::log("[Reconciler-ColumnMatch] Sütun tabanlı tabloda bulundu: " . $missingBarcode);
+                    } else {
+                        $stillMissingAfterColumn[] = $missingBarcode;
+                    }
+                }
+                $missingInStore = $stillMissingAfterColumn;
+            }
+        }
+
         // Fazla kolileri filtrele (Kalan satırlardaki gerçek barkodları ayıklıyoruz)
         $filteredExtraInStore = [];
         foreach ($pdfLinesPool as $extraLine) {
