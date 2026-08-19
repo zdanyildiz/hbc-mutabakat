@@ -58,7 +58,7 @@ class GoogleDocumentAiClient
             if ($content !== false) {
                 /** @var array<string, mixed>|null $decoded */
                 $decoded = json_decode($content, true);
-                if (is_array($decoded) && isset($decoded['private_key'], $decoded['client_email'])) {
+                if (is_array($decoded)) {
                     $this->credentialsJson = $decoded;
                 }
             }
@@ -84,6 +84,8 @@ class GoogleDocumentAiClient
      */
     public function processDocument(string $filePath, string $mimeType = 'application/pdf'): array
     {
+        @ini_set('memory_limit', '512M');
+
         if (!file_exists($filePath)) {
             throw new \InvalidArgumentException("Document AI: Dosya bulunamadı: {$filePath}");
         }
@@ -252,6 +254,21 @@ class GoogleDocumentAiClient
                     $img->clear();
                     $img->destroy();
                     $images[] = $outPath;
+                }
+            }
+
+            // Python PyMuPDF (fitz) fallback (Windows / cross-platform ultra fast rendering)
+            if (empty($images)) {
+                $pyScript = "import fitz, sys; doc=fitz.open(sys.argv[1]); [p.get_pixmap(dpi=200).save(f'{sys.argv[2]}-{i+1}.png') for i, p in enumerate(doc)]";
+                $pythonExec = PHP_OS_FAMILY === 'Windows' ? 'python' : 'python3';
+                $pyCmd = $pythonExec . ' -c ' . escapeshellarg($pyScript) . ' ' . escapeshellarg($pdfPath) . ' ' . escapeshellarg($tempPrefix);
+                shell_exec($pyCmd);
+
+                $pattern = $tempPrefix . '-*.png';
+                $pageFiles = glob($pattern);
+                if ($pageFiles !== false && !empty($pageFiles)) {
+                    sort($pageFiles, SORT_NATURAL);
+                    $images = $pageFiles;
                 }
             }
 
@@ -646,6 +663,59 @@ class GoogleDocumentAiClient
             return $this->tokenCache['token'];
         }
 
+        // 1. Authorized User (OAuth2 Refresh Token akışı - gcloud ADC / user credentials)
+        if (isset($this->credentialsJson['type']) && $this->credentialsJson['type'] === 'authorized_user') {
+            $clientId = isset($this->credentialsJson['client_id']) && is_string($this->credentialsJson['client_id']) ? $this->credentialsJson['client_id'] : '';
+            $clientSecret = isset($this->credentialsJson['client_secret']) && is_string($this->credentialsJson['client_secret']) ? $this->credentialsJson['client_secret'] : '';
+            $refreshToken = isset($this->credentialsJson['refresh_token']) && is_string($this->credentialsJson['refresh_token']) ? $this->credentialsJson['refresh_token'] : '';
+            $tokenUri = 'https://oauth2.googleapis.com/token';
+
+            if ($clientId === '' || $clientSecret === '' || $refreshToken === '') {
+                return null;
+            }
+
+            $ch = curl_init($tokenUri);
+            if ($ch === false) {
+                return null;
+            }
+
+            $postFields = http_build_query([
+                'client_id' => $clientId,
+                'client_secret' => $clientSecret,
+                'refresh_token' => $refreshToken,
+                'grant_type' => 'refresh_token',
+            ]);
+
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $postFields);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+
+            $tokenResponse = curl_exec($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode !== 200 || !is_string($tokenResponse)) {
+                \App\Logger::log("[DocumentAiClient] OAuth2 refresh token alma başarısız HTTP {$httpCode}: " . substr((string)$tokenResponse, 0, 200));
+                return null;
+            }
+
+            /** @var array<string, mixed>|null $tokenData */
+            $tokenData = json_decode($tokenResponse, true);
+            if (is_array($tokenData) && isset($tokenData['access_token']) && is_string($tokenData['access_token'])) {
+                $token = $tokenData['access_token'];
+                $expiresIn = isset($tokenData['expires_in']) && is_numeric($tokenData['expires_in']) ? (int)$tokenData['expires_in'] : 3600;
+                $this->tokenCache = [
+                    'token' => $token,
+                    'expires_at' => $now + $expiresIn,
+                ];
+                return $token;
+            }
+            return null;
+        }
+
+        // 2. Service Account (RSA SHA256 JWT akışı)
         $clientEmail = isset($this->credentialsJson['client_email']) && is_string($this->credentialsJson['client_email']) ? $this->credentialsJson['client_email'] : '';
         $privateKey = isset($this->credentialsJson['private_key']) && is_string($this->credentialsJson['private_key']) ? $this->credentialsJson['private_key'] : '';
         $tokenUri = isset($this->credentialsJson['token_uri']) && is_string($this->credentialsJson['token_uri']) ? $this->credentialsJson['token_uri'] : 'https://oauth2.googleapis.com/token';
