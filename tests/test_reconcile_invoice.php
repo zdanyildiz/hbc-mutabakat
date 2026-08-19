@@ -3,7 +3,9 @@
 declare(strict_types=1);
 
 require_once dirname(__DIR__) . '/vendor/autoload.php';
-\App\Env::load(dirname(__DIR__));
+if (class_exists('\\App\\Env')) {
+    \App\Env::load(dirname(__DIR__));
+}
 
 $excelPath = file_exists(dirname(__DIR__) . '/34AIA502.xlsx') ? dirname(__DIR__) . '/34AIA502.xlsx' : 'C:\\Users\\zdany\\Downloads\\wetransfer_yeni-klasor-3_2026-08-18_1418\\Yeni klasör (3)\\34AIA502.xlsx';
 $pdfPaths = [
