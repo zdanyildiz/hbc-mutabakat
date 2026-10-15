@@ -17,6 +17,15 @@
             "App\\": "src/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "php tests/run_tests.php",
+        "phpstan": "phpstan analyse --memory-limit 512M"
+    },
     "authors": [
         {
             "name": "Zekeriya Danyildiz"

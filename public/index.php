@@ -13,6 +13,15 @@ use App\Database;
 use App\ExcelExtractor;
 use App\PdfExtractor;
 use App\Reconciler;
+use App\SaasPlanCatalog;
+use App\SaasQuotaException;
+use App\SubscriptionService;
+use App\TenantContext;
+use App\TenantMiddleware;
+
+if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
+    @session_start();
+}
 
 // Initialize config
 $config = require dirname(__DIR__) . '/config.php';
@@ -28,7 +37,140 @@ if ($dbEnabled) {
     $db->initSchema();
 }
 
-$action = $_GET['action'] ?? '';
+$approvalSecret = isset($config['deploy_secret']) && is_string($config['deploy_secret'])
+    ? $config['deploy_secret']
+    : 'hbcnakliyat_secret_token_123';
+$subscriptionService = new SubscriptionService($db, $approvalSecret);
+$tenantMiddleware = new TenantMiddleware($subscriptionService);
+
+/** @var array<string, mixed> $sessionData */
+$sessionData = isset($_SESSION) && is_array($_SESSION) ? $_SESSION : [];
+$activeTenant = $tenantMiddleware->resolve($_REQUEST, $_SERVER, $sessionData);
+
+$action = isset($_GET['action']) && is_string($_GET['action']) ? $_GET['action'] : '';
+
+// SaaS API: Get 2026 Plan Catalog
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'saas-plans') {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'success' => true,
+        'plans' => SaasPlanCatalog::getAllPlans(),
+        'paid_plans' => SaasPlanCatalog::getPaidPlans(),
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// SaaS API: Get Active Tenant & Subscription Status
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'saas-status') {
+    header('Content-Type: application/json; charset=utf-8');
+    $currentSub = $activeTenant !== null ? $subscriptionService->getCurrentSubscription($activeTenant->id) : null;
+    echo json_encode([
+        'success' => true,
+        'tenant' => $activeTenant !== null ? $activeTenant->toArray() : null,
+        'subscription' => $currentSub !== null ? $currentSub->toArray() : null,
+        'plans' => SaasPlanCatalog::getAllPlans(),
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// SaaS API: Self-Service Tenant Registration (14-Day / 50 OCR Trial)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'saas-register') {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $registeredTenant = $subscriptionService->registerTenantWithTrial($_POST);
+        if (isset($_SESSION) && is_array($_SESSION)) {
+            $_SESSION['tenant_id'] = $registeredTenant->id;
+        }
+        $sub = $registeredTenant->subscription;
+        echo json_encode([
+            'success' => true,
+            'message' => '14 Gün / 50 Adet Koli & İrsaliye OCR Ücretsiz Deneme aboneliğiniz başarıyla başlatıldı.',
+            'tenant' => $registeredTenant->toArray(),
+            'subscription' => $sub !== null ? $sub->toArray() : null,
+        ], JSON_UNESCAPED_UNICODE);
+    } catch (\Throwable $e) {
+        echo json_encode([
+            'success' => false,
+            'message' => $e->getMessage(),
+        ], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
+// SaaS API: Request Plan Upgrade (pending_payment)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'saas-upgrade') {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $targetTenantId = isset($_POST['tenant_id']) && is_numeric($_POST['tenant_id'])
+            ? (int)$_POST['tenant_id']
+            : ($activeTenant !== null ? $activeTenant->id : 0);
+        if ($targetTenantId <= 0) {
+            throw new \InvalidArgumentException('Paket yükseltme için önce firma kaydı (tenant_id) gereklidir.');
+        }
+        $planCode = isset($_POST['plan_code']) && is_string($_POST['plan_code'])
+            ? trim($_POST['plan_code'])
+            : SaasPlanCatalog::PLAN_LOGISTICS_PRO;
+        $billingCycle = isset($_POST['billing_cycle']) && is_string($_POST['billing_cycle'])
+            ? trim($_POST['billing_cycle'])
+            : SaasPlanCatalog::CYCLE_YEARLY;
+        $paymentRef = isset($_POST['payment_reference']) && is_string($_POST['payment_reference'])
+            ? trim($_POST['payment_reference'])
+            : null;
+
+        $pendingSub = $subscriptionService->requestPlanUpgrade(
+            $targetTenantId,
+            $planCode,
+            $billingCycle,
+            $paymentRef
+        );
+
+        echo json_encode([
+            'success' => true,
+            'message' => 'Paket yükseltme talebiniz oluşturuldu (pending_payment). Ödeme/havale onaylandıktan sonra paketiniz aktifleşecektir.',
+            'subscription' => $pendingSub->toArray(),
+        ], JSON_UNESCAPED_UNICODE);
+    } catch (\Throwable $e) {
+        echo json_encode([
+            'success' => false,
+            'message' => $e->getMessage(),
+        ], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
+// SaaS API: Approve Plan Upgrade (Admin / HMAC Approval -> active)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'saas-approve-upgrade') {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $subOrTenantId = isset($_POST['subscription_id']) && is_numeric($_POST['subscription_id'])
+            ? (int)$_POST['subscription_id']
+            : (isset($_POST['tenant_id']) && is_numeric($_POST['tenant_id']) ? (int)$_POST['tenant_id'] : 0);
+        $paymentRef = isset($_POST['payment_reference']) && is_string($_POST['payment_reference'])
+            ? trim($_POST['payment_reference'])
+            : null;
+        $hmacSig = isset($_SERVER['HTTP_X_APPROVE_SIGNATURE']) && is_string($_SERVER['HTTP_X_APPROVE_SIGNATURE'])
+            ? trim($_SERVER['HTTP_X_APPROVE_SIGNATURE'])
+            : (isset($_POST['hmac_signature']) && is_string($_POST['hmac_signature']) ? trim($_POST['hmac_signature']) : null);
+        $adminKey = isset($_POST['admin_key']) && is_string($_POST['admin_key']) ? trim($_POST['admin_key']) : '';
+
+        if ($hmacSig === null && $adminKey !== $approvalSecret) {
+            throw new \RuntimeException('Ödeme/paket aktivasyonu için geçerli HMAC imzası veya yönetici anahtarı gereklidir.');
+        }
+
+        $approvedSub = $subscriptionService->approvePlanUpgrade($subOrTenantId, $paymentRef, $hmacSig);
+        echo json_encode([
+            'success' => true,
+            'message' => 'Paket yükseltme onaylandı, abonelik aktif edildi ve OCR kotası güncellendi.',
+            'subscription' => $approvedSub->toArray(),
+        ], JSON_UNESCAPED_UNICODE);
+    } catch (\Throwable $e) {
+        echo json_encode([
+            'success' => false,
+            'message' => $e->getMessage(),
+        ], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
 
 // Handle Reconcile Request via AJAX
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
@@ -97,6 +239,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
             exit;
         }
 
+        $requestedOcrUnits = count($pdfPaths);
+        $currentTenantId = TenantContext::getTenantId();
+        if ($currentTenantId !== null) {
+            $subscriptionService->assertCanProcessOcr($currentTenantId, $requestedOcrUnits);
+        }
+
         $excelPath = $excelFile['tmp_name'];
 
         $excelExtractor = new ExcelExtractor();
@@ -114,7 +262,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
 
         $companyId = trim((string)($_POST['company_id'] ?? '1'));
 
-        $result = $reconciler->reconcile($excelPath, $pdfPaths, $companyId);
+        $result = $reconciler->reconcile($excelPath, $pdfPaths, $companyId, $currentTenantId);
 
         // Generate barcode to store mapping
         $excelMap = $excelExtractor->extractMap($excelPath);
@@ -134,9 +282,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         $savedId = null;
         if ($dbEnabled) {
             $dbStart = microtime(true);
-            $savedId = $db->save($storeName, $result, $companyId);
+            $savedId = $db->save($storeName, $result, $companyId, $currentTenantId);
             $dbElapsed = round(microtime(true) - $dbStart, 4);
             \App\Logger::log("Veritabanı kayıt işlemi tamamlandı - Süre: {$dbElapsed} saniye (ID: {$savedId})");
+        }
+
+        $updatedSubscription = null;
+        if ($currentTenantId !== null) {
+            $updatedSubscription = $subscriptionService->consumeOcrQuota(
+                $currentTenantId,
+                $requestedOcrUnits,
+                $storeName,
+                $savedId
+            );
         }
 
         $elapsed = round(microtime(true) - $startTime, 4);
@@ -153,7 +311,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
             'pdf_original_words' => $pdfExtractor->getBarcodeToOriginalMap(),
             'pdf_mismatches' => $pdfExtractor->getMismatches(),
             'elapsed_time' => $elapsed,
+            'saas_subscription' => $updatedSubscription !== null ? $updatedSubscription->toArray() : null,
         ]);
+        exit;
+    } catch (SaasQuotaException $qe) {
+        \App\Logger::log("KOTA / ABONELİK ENGELİ: [" . $qe->getErrorCode() . "] " . $qe->getMessage());
+        echo json_encode(array_merge($qe->toPayload(), [
+            'plans' => SaasPlanCatalog::getPaidPlans(),
+        ]), JSON_UNESCAPED_UNICODE);
         exit;
     } catch (\Throwable $e) {
         \App\Logger::log("HATA OLUŞTU: [" . get_class($e) . "] " . $e->getMessage() . " | Yer: " . $e->getFile() . ":" . $e->getLine());
@@ -168,7 +333,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get-report') {
     
     $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
     if ($id > 0 && $dbEnabled) {
-        $report = $db->getById($id);
+        $report = $db->getById($id, TenantContext::getTenantId());
         if ($report !== null) {
             /** @var array{
              *     matched: array<string>,
@@ -236,7 +401,7 @@ if ($action === 'export-excel' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 if ($action === 'export-excel-saved') {
     $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
     if ($id > 0 && $dbEnabled) {
-        $report = $db->getById($id);
+        $report = $db->getById($id, TenantContext::getTenantId());
         if ($report !== null) {
             /** @var array{
              *     matched: array<string>,
@@ -310,6 +475,7 @@ if ($action === 'export-excel-saved') {
 // Get past reports if DB is enabled
 /** @var array<array{
  *     id: int,
+ *     tenant_id: int,
  *     store_name: string,
  *     terminal_count: int,
  *     store_count: int,
@@ -321,15 +487,20 @@ if ($action === 'export-excel-saved') {
  * }> $pastReports */
 $pastReports = [];
 if ($dbEnabled) {
-    $pastReports = $db->getAll();
+    $pastReports = $db->getAll(TenantContext::getTenantId());
 }
+
+$activeSubscription = $activeTenant !== null
+    ? $subscriptionService->getCurrentSubscription($activeTenant->id)
+    : null;
+$allSaasPlans = SaasPlanCatalog::getAllPlans();
 ?>
 <!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HBC Mutabakat - Hızlı & Deterministik Karşılaştırma Modülü</title>
+    <title>HBC Mutabakat - Lojistik & Perakende OCR Koli Mutabakatı (Multi-Tenant SaaS)</title>
     <meta name="description" content="El terminali verileri ile mağaza PDF çıktılarını saniyeler içinde karşılaştıran deterministik veri mutabakat modülü.">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -347,22 +518,72 @@ if ($dbEnabled) {
             <div class="logo">
                 <span class="logo-icon">⚡</span>
                 <div class="logo-text">
-                    <h1>HBC Mutabakat</h1>
-                    <p>Deterministik Veri Eşleştirme Motoru</p>
+                    <h1>HBC Mutabakat SaaS</h1>
+                    <p>B2B Lojistik & Perakende Koli / İrsaliye OCR Mutabakat Platformu</p>
                 </div>
             </div>
-            <div class="system-status">
+            <div class="system-status" style="align-items: center; flex-wrap: wrap;">
+                <?php if ($activeTenant !== null && $activeSubscription !== null): ?>
+                    <span class="status-badge status-active" id="headerTenantBadge">
+                        🏢 <?= htmlspecialchars($activeTenant->companyName) ?>
+                        (<?= $activeSubscription->isUnlimited() ? 'Sınırsız OCR' : ($activeSubscription->usedOcrCount . '/' . $activeSubscription->monthlyOcrQuota . ' OCR') ?>)
+                    </span>
+                <?php else: ?>
+                    <a href="#saasPlansSection" class="status-badge status-active" style="text-decoration: none;">
+                        🎁 14 Gün / 50 OCR Ücretsiz Deneme Başlat
+                    </a>
+                <?php endif; ?>
+                <a href="#saasPlansSection" class="btn btn-sm btn-secondary" style="padding: 0.45rem 0.9rem; font-size: 0.82rem;">
+                    🚀 SaaS Paketler & Üyelik
+                </a>
                 <?php if ($dbEnabled): ?>
                     <span class="status-badge status-active">
                         <span class="pulse-dot"></span> MySQL Aktif
                     </span>
                 <?php else: ?>
-                    <span class="status-badge status-inactive" title="Raporlar veritabanına kaydedilmeyecektir. config.php üzerinden aktif edebilirsiniz.">
-                        ⚠️ MySQL Devre Dışı
+                    <span class="status-badge status-inactive" title="SaaS abonelik katmanı yerel SQLite üzerinde aktif; geçmiş mutabakat arşivi için config.php'den MySQL açılabilir.">
+                        ⚠️ MySQL Devre Dışı (SaaS SQLite Aktif)
                     </span>
                 <?php endif; ?>
             </div>
         </header>
+
+        <!-- SaaS Subscription & Quota Status Banner -->
+        <section class="card saas-status-banner animate-fade-in" id="saasStatusBar" style="padding: 1.25rem 1.75rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                <div>
+                    <?php if ($activeTenant !== null && $activeSubscription !== null): ?>
+                        <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                            <strong style="font-size: 1.05rem;"><?= htmlspecialchars($activeTenant->companyName) ?></strong>
+                            <span class="badge badge-matched" id="saasBannerPlanCode"><?= htmlspecialchars(strtoupper($activeSubscription->planCode)) ?></span>
+                            <span class="badge <?= $activeSubscription->status === 'pending_payment' ? 'badge-extra' : 'badge-matched' ?>" id="saasBannerStatus">
+                                Durum: <?= htmlspecialchars($activeSubscription->status) ?>
+                            </span>
+                        </div>
+                        <p class="text-muted" style="font-size: 0.88rem; margin-top: 0.35rem;" id="saasBannerQuotaText">
+                            Aylık Koli/İrsaliye OCR Kotası:
+                            <strong><?= $activeSubscription->usedOcrCount ?></strong> /
+                            <strong><?= $activeSubscription->isUnlimited() ? 'Sınırsız' : (string)$activeSubscription->monthlyOcrQuota ?></strong>
+                            <?php if ($activeSubscription->trialEndsAt !== null): ?>
+                                | Deneme Bitiş: <strong><?= htmlspecialchars($activeSubscription->trialEndsAt) ?></strong>
+                            <?php else: ?>
+                                | Dönem Sonu: <strong><?= htmlspecialchars($activeSubscription->endsAt) ?></strong>
+                            <?php endif; ?>
+                        </p>
+                    <?php else: ?>
+                        <strong style="font-size: 1.05rem;">🎁 Lojistik & Perakende Tedarikçilerine Özel: 14 Gün / 50 Adet Koli & İrsaliye OCR Ücretsiz Deneme!</strong>
+                        <p class="text-muted" style="font-size: 0.88rem; margin-top: 0.25rem;">
+                            Hemen ücretsiz firma kaydınızı oluşturun, el terminali (Excel) ve mağaza irsaliye (PDF) mutabakatını saniyeler içinde deneyimleyin.
+                        </p>
+                    <?php endif; ?>
+                </div>
+                <div style="display: flex; gap: 0.6rem; flex-wrap: wrap;">
+                    <a href="#saasRegisterBox" class="btn btn-sm btn-secondary">Firma Kaydı (14 Gün Ücretsiz)</a>
+                    <a href="#saasPlansSection" class="btn btn-sm btn-primary" style="width: auto;">Paket Yükselt</a>
+                </div>
+            </div>
+            <div id="saasQuotaAlertBox" class="mismatch-alert-box" style="display: none; margin-top: 1rem;"></div>
+        </section>
 
         <!-- Main Panel Grid -->
         <main class="main-content">
@@ -374,6 +595,7 @@ if ($dbEnabled) {
                 </div>
                 
                 <form id="reconcileForm" class="reconcile-form">
+                    <input type="hidden" id="tenant_id" name="tenant_id" value="<?= $activeTenant !== null ? $activeTenant->id : '' ?>">
                     <div class="form-row" style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
                         <div class="form-group" style="flex: 1; margin-bottom: 0;">
                             <label for="company_id">Firma</label>
@@ -558,11 +780,130 @@ if ($dbEnabled) {
                     </div>
                 </section>
             <?php endif; ?>
+
+            <!-- 2026 Multi-Tenant SaaS Paket Seçimi, Ücretsiz Kayıt ve Paket Yükseltme Bölümü -->
+            <section class="card saas-plans-card animate-slide-up" id="saasPlansSection" style="margin-top: 2rem;">
+                <div class="card-header">
+                    <h2>2026 B2B Lojistik & Perakende OCR Mutabakat SaaS Paketleri</h2>
+                    <p>14 Gün / 50 OCR Ücretsiz Deneme ile hemen başlayın veya operasyon hacminize uygun pakete yükseltin (KDV Hariç).</p>
+                </div>
+
+                <!-- Pricing Cards Grid -->
+                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 2rem;">
+                    <?php foreach ($allSaasPlans as $planCode => $plan): ?>
+                        <div class="stat-box <?= $planCode === 'logistics_pro' ? 'stat-matched' : 'stat-extra' ?>" style="display: flex; flex-direction: column; justify-content: space-between; gap: 1rem;">
+                            <div>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                    <span class="badge <?= $planCode === 'logistics_pro' ? 'badge-matched' : 'badge-extra' ?>"><?= htmlspecialchars($plan['badge']) ?></span>
+                                    <code style="font-size: 0.75rem; opacity: 0.75;"><?= htmlspecialchars($planCode) ?></code>
+                                </div>
+                                <div class="stat-label" style="font-size: 1.15rem; color: var(--text-primary);"><?= htmlspecialchars($plan['name']) ?></div>
+                                <?php if ($plan['is_trial']): ?>
+                                    <div class="stat-value" style="font-size: 1.7rem; margin: 0.5rem 0;">Ücretsiz <span style="font-size: 0.9rem; font-weight: 500;">(14 Gün / 50 OCR)</span></div>
+                                <?php else: ?>
+                                    <div class="stat-value" style="font-size: 1.65rem; margin: 0.5rem 0;">
+                                        <?= number_format($plan['monthly_price_try'], 0, ',', '.') ?> ₺<span style="font-size: 0.85rem; font-weight: 500;">/ay</span>
+                                    </div>
+                                    <div style="font-size: 0.85rem; font-weight: 600; color: var(--primary); margin-bottom: 0.5rem;">
+                                        Yıllık Peşin: <?= number_format($plan['yearly_price_try'], 0, ',', '.') ?> ₺ / Yıl
+                                    </div>
+                                <?php endif; ?>
+                                <p class="stat-desc" style="margin-bottom: 0.75rem; line-height: 1.4;"><?= htmlspecialchars($plan['description']) ?></p>
+                                <ul style="padding-left: 1.1rem; font-size: 0.82rem; color: var(--text-secondary); line-height: 1.55;">
+                                    <?php foreach ($plan['features'] as $feat): ?>
+                                        <li><?= htmlspecialchars($feat) ?></li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            </div>
+                            <div>
+                                <?php if ($plan['is_trial']): ?>
+                                    <a href="#saasRegisterBox" class="btn btn-sm btn-secondary" style="width: 100%;">Ücretsiz Deneme Başlat</a>
+                                <?php else: ?>
+                                    <button type="button" class="btn btn-sm btn-primary btn-select-saas-plan" data-plan="<?= htmlspecialchars($planCode) ?>" style="width: 100%;">
+                                        Bu Pakete Yükselt
+                                    </button>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+
+                <!-- Self-Service Registration & Plan Upgrade Forms -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
+                    <!-- Self-Service Tenant Registration (14-Day / 50 OCR Trial) -->
+                    <div class="stat-box" id="saasRegisterBox" style="background: rgba(255,255,255,0.6); border: 1px solid var(--border-color);">
+                        <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">🏢 Yeni Tedarikçi / Lojistik Firması Kaydı</h3>
+                        <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">
+                            Anında <strong>14 Gün ve 50 Adet Koli/İrsaliye OCR</strong> okuma kotalı ücretsiz deneme aboneliğinizi başlatır.
+                        </p>
+                        <form id="saasRegisterForm">
+                            <div class="form-group" style="margin-bottom: 0.85rem;">
+                                <label for="reg_company_name">Firma Ünvanı</label>
+                                <input type="text" id="reg_company_name" name="company_name" placeholder="Örn: Pozitif Lojistik ve Tekstil A.Ş." required>
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0.85rem;">
+                                <label for="reg_tax_number">Vergi Numarası (Opsiyonel)</label>
+                                <input type="text" id="reg_tax_number" name="tax_number" placeholder="Örn: 1234567890">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0.85rem;">
+                                <label for="reg_contact_name">Yetkili Ad Soyad</label>
+                                <input type="text" id="reg_contact_name" name="contact_name" placeholder="Örn: Ahmet Yılmaz" required>
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0.85rem;">
+                                <label for="reg_contact_email">Kurumsal E-Posta</label>
+                                <input type="text" id="reg_contact_email" name="contact_email" placeholder="ornek@firmaniz.com.tr" required>
+                            </div>
+                            <div class="form-group" style="margin-bottom: 1rem;">
+                                <label for="reg_contact_phone">Telefon (Opsiyonel)</label>
+                                <input type="text" id="reg_contact_phone" name="contact_phone" placeholder="05XX XXX XX XX">
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="saasRegisterSubmitBtn">
+                                🎁 14 Gün / 50 OCR Ücretsiz Denemeyi Başlat
+                            </button>
+                            <div id="saasRegisterResult" style="display: none; margin-top: 0.75rem; font-size: 0.88rem;"></div>
+                        </form>
+                    </div>
+
+                    <!-- Plan Upgrade Request (pending_payment) -->
+                    <div class="stat-box" id="saasUpgradeBox" style="background: rgba(255,255,255,0.6); border: 1px solid var(--border-color);">
+                        <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">🚀 Paket Yükseltme Talebi (Havale/EFT & Kurumsal Lisans)</h3>
+                        <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">
+                            Seçtiğiniz paket <code>pending_payment</code> durumunda açılır; ödeme/havale onayıyla kotanız anında sıfırlanıp yükseltilir.
+                        </p>
+                        <form id="saasUpgradeForm">
+                            <input type="hidden" id="upg_tenant_id" name="tenant_id" value="<?= $activeTenant !== null ? $activeTenant->id : '' ?>">
+                            <div class="form-group" style="margin-bottom: 0.85rem;">
+                                <label for="upg_plan_code">Yükseltilecek Paket</label>
+                                <select id="upg_plan_code" name="plan_code" style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); background: #fff;">
+                                    <option value="logistics_pro" selected>Lojistik & Perakende Pro (2.500 OCR/Ay — 4.990 ₺/Ay | 39.900 ₺/Yıl)</option>
+                                    <option value="supplier_starter">Tedarikçi Başlangıç (500 OCR/Ay — 2.490 ₺/Ay | 24.900 ₺/Yıl)</option>
+                                    <option value="enterprise_unlimited">Kurumsal Sınırsız / Özel ERP (Sınırsız OCR — 9.900 ₺/Ay | 89.900 ₺/Yıl)</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0.85rem;">
+                                <label for="upg_billing_cycle">Faturalama Dönemi</label>
+                                <select id="upg_billing_cycle" name="billing_cycle" style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); background: #fff;">
+                                    <option value="yearly" selected>Yıllık Peşin Lisans (%20-%33 Avantajlı + Ücretsiz Kurulum)</option>
+                                    <option value="monthly">Aylık Abonelik</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="margin-bottom: 1rem;">
+                                <label for="upg_payment_reference">Ödeme / Havale Dekont Referansı (Opsiyonel)</label>
+                                <input type="text" id="upg_payment_reference" name="payment_reference" placeholder="Örn: EFT-20261015-LOJISTIKPRO">
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="saasUpgradeSubmitBtn">
+                                💳 Paket Yükseltme Talebi Oluştur (pending_payment)
+                            </button>
+                            <div id="saasUpgradeResult" style="display: none; margin-top: 0.75rem; font-size: 0.88rem;"></div>
+                        </form>
+                    </div>
+                </div>
+            </section>
         </main>
 
         <!-- Footer -->
         <footer class="app-footer" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-            <p>&copy; <?= date('Y') ?> HBC Mutabakat.</p>
+            <p>&copy; <?= date('Y') ?> HBC Mutabakat SaaS — Global Pozitif Teknolojiler.</p>
             <p style="font-size: 0.8rem; color: var(--text-muted);">Aktif Sunucu IP: <strong><?= $_SERVER['SERVER_ADDR'] ?? 'Bilinmiyor' ?></strong></p>
         </footer>
     </div>

@@ -190,8 +190,35 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentData.matchedOcrCount = data.result.matchedOcrCount || 0;
                 currentData.matchedTextCount = data.result.matchedTextCount || 0;
 
+                if (data.saas_subscription) {
+                    const quotaTextEl = document.getElementById('saasBannerQuotaText');
+                    if (quotaTextEl) {
+                        const quotaLabel = data.saas_subscription.is_unlimited ? 'Sınırsız' : data.saas_subscription.monthly_ocr_quota;
+                        quotaTextEl.innerHTML = `Aylık Koli/İrsaliye OCR Kotası: <strong>${data.saas_subscription.used_ocr_count}</strong> / <strong>${quotaLabel}</strong> | Dönem Sonu: <strong>${escapeHtml(String(data.saas_subscription.ends_at || ''))}</strong>`;
+                    }
+                }
+
+                const quotaAlert = document.getElementById('saasQuotaAlertBox');
+                if (quotaAlert) {
+                    quotaAlert.style.display = 'none';
+                }
+
                 renderResults();
                 resultsSection.scrollIntoView({ behavior: 'smooth' });
+            } else if (data.upgrade_required) {
+                const quotaAlert = document.getElementById('saasQuotaAlertBox');
+                if (quotaAlert) {
+                    quotaAlert.style.display = 'block';
+                    quotaAlert.innerHTML = `<div class="mismatch-alert-title">⚠️ OCR Kota / Abonelik Sınırı (${escapeHtml(String(data.error_code || 'QUOTA_EXCEEDED'))})</div>
+                        <p style="font-size:0.9rem;color:#ef4444;margin-bottom:0.5rem;">${escapeHtml(String(data.message || ''))}</p>
+                        <a href="#saasPlansSection" class="btn btn-sm btn-primary" style="width:auto;">Hemen Paket Yükselt</a>`;
+                }
+                const saasPlansSection = document.getElementById('saasPlansSection');
+                if (saasPlansSection) {
+                    saasPlansSection.scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    alert('Paket Yükseltme Gerekli: ' + data.message);
+                }
             } else {
                 alert('Hata: ' + data.message);
             }
@@ -774,4 +801,95 @@ document.addEventListener('DOMContentLoaded', () => {
         newWin.document.write(html);
         newWin.document.close();
     });
+
+    // SaaS Plan Selection Buttons
+    document.querySelectorAll('.btn-select-saas-plan').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const planCode = btn.getAttribute('data-plan');
+            const planSelect = document.getElementById('upg_plan_code');
+            if (planSelect && planCode) {
+                planSelect.value = planCode;
+            }
+            const upgradeBox = document.getElementById('saasUpgradeBox');
+            if (upgradeBox) {
+                upgradeBox.scrollIntoView({ behavior: 'smooth' });
+            }
+        });
+    });
+
+    // SaaS Self-Service Tenant Registration (14-Day / 50 OCR Trial)
+    const saasRegisterForm = document.getElementById('saasRegisterForm');
+    if (saasRegisterForm) {
+        saasRegisterForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const resultEl = document.getElementById('saasRegisterResult');
+            const formData = new FormData(saasRegisterForm);
+
+            fetch('index.php?action=saas-register', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (resultEl) {
+                    resultEl.style.display = 'block';
+                }
+                if (data.success && data.tenant) {
+                    const tenantInput = document.getElementById('tenant_id');
+                    if (tenantInput) tenantInput.value = data.tenant.id;
+                    const upgTenantInput = document.getElementById('upg_tenant_id');
+                    if (upgTenantInput) upgTenantInput.value = data.tenant.id;
+
+                    if (resultEl) {
+                        resultEl.innerHTML = `<span class="badge badge-matched">✅ ${escapeHtml(data.message)} (Tenant ID: #${data.tenant.id})</span>`;
+                    }
+                    setTimeout(() => {
+                        window.location.href = `index.php?tenant_id=${data.tenant.id}`;
+                    }, 900);
+                } else if (resultEl) {
+                    resultEl.innerHTML = `<span class="badge badge-missing">❌ ${escapeHtml(data.message || 'Kayıt başarısız.')}</span>`;
+                }
+            })
+            .catch(() => {
+                if (resultEl) {
+                    resultEl.style.display = 'block';
+                    resultEl.innerHTML = '<span class="badge badge-missing">❌ Sunucu iletişim hatası.</span>';
+                }
+            });
+        });
+    }
+
+    // SaaS Plan Upgrade Request (pending_payment)
+    const saasUpgradeForm = document.getElementById('saasUpgradeForm');
+    if (saasUpgradeForm) {
+        saasUpgradeForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const resultEl = document.getElementById('saasUpgradeResult');
+            const formData = new FormData(saasUpgradeForm);
+
+            fetch('index.php?action=saas-upgrade', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (resultEl) {
+                    resultEl.style.display = 'block';
+                }
+                if (data.success && data.subscription) {
+                    if (resultEl) {
+                        resultEl.innerHTML = `<span class="badge badge-extra">⏳ ${escapeHtml(data.message)} (Durum: ${escapeHtml(data.subscription.status)})</span>`;
+                    }
+                } else if (resultEl) {
+                    resultEl.innerHTML = `<span class="badge badge-missing">❌ ${escapeHtml(data.message || 'Yükseltme talebi başarısız.')}</span>`;
+                }
+            })
+            .catch(() => {
+                if (resultEl) {
+                    resultEl.style.display = 'block';
+                    resultEl.innerHTML = '<span class="badge badge-missing">❌ Sunucu iletişim hatası.</span>';
+                }
+            });
+        });
+    }
 });
