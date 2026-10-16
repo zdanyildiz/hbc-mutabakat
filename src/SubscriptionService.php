@@ -34,7 +34,7 @@ class SubscriptionService
     }
 
     /**
-     * Yeni tedarikçi/lojistik firması kaydı: Otomatik 14 gün ve 50 OCR kotalı trial abonelik başlatır.
+     * Yeni tedarikçi/lojistik firması kaydı: Otomatik 90 gün ve 50 OCR kotalı trial abonelik başlatır.
      *
      * @param array<string, mixed> $payload
      * @param \DateTimeImmutable|null $now
@@ -218,7 +218,7 @@ class SubscriptionService
         if ($activeOrTrialSub->isExpired($current)) {
             $this->markSubscriptionExpired($activeOrTrialSub->id, $current);
             throw new SaasQuotaException(
-                'Abonelik veya 14 günlük ücretsiz deneme süreniz sona erdi. İşleme devam etmek için lütfen paket yükseltin.',
+                'Abonelik veya 90 günlük ücretsiz deneme süreniz sona erdi. İşleme devam etmek için lütfen paket yükseltin.',
                 SaasQuotaException::CODE_SUBSCRIPTION_EXPIRED,
                 true,
                 $tenantId

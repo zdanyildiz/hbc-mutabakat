@@ -17,12 +17,12 @@ class SaasPlanCatalog
     public const CYCLE_MONTHLY = 'monthly';
     public const CYCLE_YEARLY = 'yearly';
 
-    public const TRIAL_DAYS = 14;
+    public const TRIAL_DAYS = 90;
     public const TRIAL_OCR_QUOTA = 50;
     public const UNLIMITED_QUOTA = -1;
 
     /**
-     * Returns all SaaS plans including the 14-day / 50 OCR free trial and paid tiers.
+     * Returns all SaaS plans including the 90-day / 50 OCR free trial and paid tiers.
      *
      * @return array<string, array{
      *     plan_code: string,
@@ -46,7 +46,7 @@ class SaasPlanCatalog
             self::PLAN_TRIAL => [
                 'plan_code' => self::PLAN_TRIAL,
                 'name' => 'Canlı Demo / Deneme',
-                'description' => '14 Gün / 50 Adet Koli & İrsaliye OCR Okuma Ücretsiz Deneme.',
+                'description' => '90 Gün / 50 Adet Koli & İrsaliye OCR Okuma Ücretsiz Deneme.',
                 'monthly_price_try' => 0.0,
                 'yearly_price_try' => 0.0,
                 'monthly_ocr_quota' => self::TRIAL_OCR_QUOTA,
@@ -55,9 +55,9 @@ class SaasPlanCatalog
                 'is_unlimited' => false,
                 'excel_erp_export' => true,
                 'custom_erp_integration' => false,
-                'badge' => '14 Gün Ücretsiz',
+                'badge' => '90 Gün Ücretsiz',
                 'features' => [
-                    '14 Gün Ücretsiz Tam Fonksiyonlu Deneme',
+                    '90 Gün Ücretsiz Tam Fonksiyonlu Deneme',
                     '50 Adet Koli & İrsaliye OCR Okuma Hakkı',
                     'Deterministik Barkod & İrsaliye Eşleştirme',
                     'Bölünmüş Satır ve Glif Hata Kurtarma',
