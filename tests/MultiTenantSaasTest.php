@@ -56,9 +56,9 @@ class MultiTenantSaasTest extends TestCase
         $this->assertArrayHasKey(SaasPlanCatalog::PLAN_LOGISTICS_PRO, $plans);
         $this->assertArrayHasKey(SaasPlanCatalog::PLAN_ENTERPRISE_UNLIMITED, $plans);
 
-        // 1. Canlı Demo / Deneme: 14 Gün / 50 OCR
+        // 1. Canlı Demo / Deneme: 90 Gün / 50 OCR
         $trial = SaasPlanCatalog::getPlan(SaasPlanCatalog::PLAN_TRIAL);
-        $this->assertSame(14, $trial['trial_days']);
+        $this->assertSame(90, $trial['trial_days']);
         $this->assertSame(50, $trial['monthly_ocr_quota']);
         $this->assertSame(0.0, $trial['monthly_price_try']);
 
@@ -82,7 +82,7 @@ class MultiTenantSaasTest extends TestCase
         $this->assertSame(89900.0, SaasPlanCatalog::resolvePriceTry('enterprise_unlimited', 'yearly'));
     }
 
-    public function testRegisterTenantWithTrialStarts14DaysAnd50OcrQuota(): void
+    public function testRegisterTenantWithTrialStarts90DaysAnd50OcrQuota(): void
     {
         $now = new \DateTimeImmutable('2026-10-15 12:00:00');
 
@@ -107,8 +107,8 @@ class MultiTenantSaasTest extends TestCase
         $this->assertSame(50, $sub->monthlyOcrQuota);
         $this->assertSame(0, $sub->usedOcrCount);
         $this->assertSame(50, $sub->remainingQuota());
-        $this->assertSame('2026-10-29 12:00:00', $sub->trialEndsAt);
-        $this->assertSame('2026-10-29 12:00:00', $sub->endsAt);
+        $this->assertSame('2027-01-13 12:00:00', $sub->trialEndsAt);
+        $this->assertSame('2027-01-13 12:00:00', $sub->endsAt);
     }
 
     public function testOcrQuotaConsumptionAndFailClosedEnforcementWhenQuotaExceeded(): void
@@ -168,8 +168,8 @@ class MultiTenantSaasTest extends TestCase
             'contact_email' => 'can@vakitlojistik.com.tr',
         ], $registeredAt);
 
-        // 15 days later (trial expired)
-        $afterExpiry = new \DateTimeImmutable('2026-10-16 09:00:01');
+        // 91 days later (trial expired)
+        $afterExpiry = new \DateTimeImmutable('2027-01-01 09:00:01');
 
         try {
             $this->subscriptionService->assertCanProcessOcr($tenant->id, 1, $afterExpiry);
