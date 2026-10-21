@@ -20,6 +20,19 @@ use App\TenantContext;
 use App\TenantMiddleware;
 
 if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
+    session_name('HBC_MUTABAKAT_SESSID');
+    ini_set('session.name', 'HBC_MUTABAKAT_SESSID');
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
+        || (($_SERVER['SERVER_PORT'] ?? 80) == 443);
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'domain' => '',
+        'secure' => $isHttps,
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
     @session_start();
 }
 
@@ -73,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'saas-status') {
     exit;
 }
 
-// SaaS API: Self-Service Tenant Registration (14-Day / 50 OCR Trial)
+// SaaS API: Self-Service Tenant Registration (90-Day / 50 OCR Trial)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'saas-register') {
     header('Content-Type: application/json; charset=utf-8');
     try {
@@ -84,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'saas-register') {
         $sub = $registeredTenant->subscription;
         echo json_encode([
             'success' => true,
-            'message' => '14 Gün / 50 Adet Koli & İrsaliye OCR Ücretsiz Deneme aboneliğiniz başarıyla başlatıldı.',
+            'message' => '90 Gün / 50 Adet Koli & İrsaliye OCR Ücretsiz Deneme aboneliğiniz başarıyla başlatıldı.',
             'tenant' => $registeredTenant->toArray(),
             'subscription' => $sub !== null ? $sub->toArray() : null,
         ], JSON_UNESCAPED_UNICODE);
@@ -531,7 +544,7 @@ $allSaasPlans = SaasPlanCatalog::getAllPlans();
                     </span>
                 <?php else: ?>
                     <a href="#saasPlansSection" class="status-badge status-active" style="text-decoration: none;">
-                        🎁 14 Gün / 50 OCR Ücretsiz Deneme Başlat
+                        🎁 90 Gün / 50 OCR Ücretsiz Deneme Başlat
                     </a>
                 <?php endif; ?>
                 <a href="#saasPlansSection" class="btn btn-sm btn-secondary" style="padding: 0.45rem 0.9rem; font-size: 0.82rem;">
@@ -572,14 +585,14 @@ $allSaasPlans = SaasPlanCatalog::getAllPlans();
                             <?php endif; ?>
                         </p>
                     <?php else: ?>
-                        <strong style="font-size: 1.05rem;">🎁 Lojistik & Perakende Tedarikçilerine Özel: 14 Gün / 50 Adet Koli & İrsaliye OCR Ücretsiz Deneme!</strong>
+                        <strong style="font-size: 1.05rem;">🎁 Lojistik & Perakende Tedarikçilerine Özel: 90 Gün / 50 Adet Koli & İrsaliye OCR Ücretsiz Deneme!</strong>
                         <p class="text-muted" style="font-size: 0.88rem; margin-top: 0.25rem;">
                             Hemen ücretsiz firma kaydınızı oluşturun, el terminali (Excel) ve mağaza irsaliye (PDF) mutabakatını saniyeler içinde deneyimleyin.
                         </p>
                     <?php endif; ?>
                 </div>
                 <div style="display: flex; gap: 0.6rem; flex-wrap: wrap;">
-                    <a href="#saasRegisterBox" class="btn btn-sm btn-secondary">Firma Kaydı (14 Gün Ücretsiz)</a>
+                    <a href="#saasRegisterBox" class="btn btn-sm btn-secondary">Firma Kaydı (90 Gün Ücretsiz)</a>
                     <a href="#saasPlansSection" class="btn btn-sm btn-primary" style="width: auto;">Paket Yükselt</a>
                 </div>
             </div>
@@ -786,7 +799,7 @@ $allSaasPlans = SaasPlanCatalog::getAllPlans();
             <section class="card saas-plans-card animate-slide-up" id="saasPlansSection" style="margin-top: 2rem;">
                 <div class="card-header">
                     <h2>2026 B2B Lojistik & Perakende OCR Mutabakat SaaS Paketleri</h2>
-                    <p>14 Gün / 50 OCR Ücretsiz Deneme ile hemen başlayın veya operasyon hacminize uygun pakete yükseltin (KDV Hariç).</p>
+                    <p>90 Gün / 50 OCR Ücretsiz Deneme ile hemen başlayın veya operasyon hacminize uygun pakete yükseltin (KDV Hariç).</p>
                 </div>
 
                 <!-- Pricing Cards Grid -->
@@ -800,7 +813,7 @@ $allSaasPlans = SaasPlanCatalog::getAllPlans();
                                 </div>
                                 <div class="stat-label" style="font-size: 1.15rem; color: var(--text-primary);"><?= htmlspecialchars($plan['name']) ?></div>
                                 <?php if ($plan['is_trial']): ?>
-                                    <div class="stat-value" style="font-size: 1.7rem; margin: 0.5rem 0;">Ücretsiz <span style="font-size: 0.9rem; font-weight: 500;">(14 Gün / 50 OCR)</span></div>
+                                    <div class="stat-value" style="font-size: 1.7rem; margin: 0.5rem 0;">Ücretsiz <span style="font-size: 0.9rem; font-weight: 500;">(90 Gün / 50 OCR)</span></div>
                                 <?php else: ?>
                                     <div class="stat-value" style="font-size: 1.65rem; margin: 0.5rem 0;">
                                         <?= number_format($plan['monthly_price_try'], 0, ',', '.') ?> ₺<span style="font-size: 0.85rem; font-weight: 500;">/ay</span>
@@ -831,11 +844,11 @@ $allSaasPlans = SaasPlanCatalog::getAllPlans();
 
                 <!-- Self-Service Registration & Plan Upgrade Forms -->
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
-                    <!-- Self-Service Tenant Registration (14-Day / 50 OCR Trial) -->
+                    <!-- Self-Service Tenant Registration (90-Day / 50 OCR Trial) -->
                     <div class="stat-box" id="saasRegisterBox" style="background: rgba(255,255,255,0.6); border: 1px solid var(--border-color);">
                         <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">🏢 Yeni Tedarikçi / Lojistik Firması Kaydı</h3>
                         <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">
-                            Anında <strong>14 Gün ve 50 Adet Koli/İrsaliye OCR</strong> okuma kotalı ücretsiz deneme aboneliğinizi başlatır.
+                            Anında <strong>90 Gün ve 50 Adet Koli/İrsaliye OCR</strong> okuma kotalı ücretsiz deneme aboneliğinizi başlatır.
                         </p>
                         <form id="saasRegisterForm">
                             <div class="form-group" style="margin-bottom: 0.85rem;">
@@ -859,7 +872,7 @@ $allSaasPlans = SaasPlanCatalog::getAllPlans();
                                 <input type="text" id="reg_contact_phone" name="contact_phone" placeholder="05XX XXX XX XX">
                             </div>
                             <button type="submit" class="btn btn-primary" id="saasRegisterSubmitBtn">
-                                🎁 14 Gün / 50 OCR Ücretsiz Denemeyi Başlat
+                                🎁 90 Gün / 50 OCR Ücretsiz Denemeyi Başlat
                             </button>
                             <div id="saasRegisterResult" style="display: none; margin-top: 0.75rem; font-size: 0.88rem;"></div>
                         </form>

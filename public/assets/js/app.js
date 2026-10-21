@@ -817,7 +817,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // SaaS Self-Service Tenant Registration (14-Day / 50 OCR Trial)
+    // SaaS Self-Service Tenant Registration (90-Day / 50 OCR Trial)
     const saasRegisterForm = document.getElementById('saasRegisterForm');
     if (saasRegisterForm) {
         saasRegisterForm.addEventListener('submit', (e) => {
