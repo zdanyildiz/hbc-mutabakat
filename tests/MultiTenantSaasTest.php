@@ -377,4 +377,55 @@ class MultiTenantSaasTest extends TestCase
         $this->assertSame(5000, $afterHugeConsumption->usedOcrCount);
         $this->assertTrue($afterHugeConsumption->canProcessOcr(10000, $now));
     }
+
+    public function testPdfExtractorInProcessCachingWorks(): void
+    {
+        $extractor = new \App\PdfExtractor();
+        $ref = new \ReflectionClass($extractor);
+        
+        $extractCacheProp = $ref->getProperty('extractCache');
+        $extractCacheProp->setAccessible(true);
+
+        $rawTextCacheProp = $ref->getProperty('rawTextCache');
+        $rawTextCacheProp->setAccessible(true);
+
+        $storeNameCacheProp = $ref->getProperty('storeNameCache');
+        $storeNameCacheProp->setAccessible(true);
+
+        $dummyFile = __DIR__ . '/test_dummy.pdf';
+        file_put_contents($dummyFile, "%PDF-1.4\nTest\n%%EOF");
+
+        try {
+            // Pre-seed cache
+            $extractor->setUseOcr(false);
+            $cacheKey = $dummyFile . '|text';
+            $extractCacheProp->setValue($extractor, [$cacheKey => ['123456789012345678']]);
+            $rawTextCacheProp->setValue($extractor, [$cacheKey => "T123 - Test Magaza\n123456789012345678"]);
+
+            // Call extract - should return cached without parsing
+            $lines = $extractor->extract($dummyFile);
+            $this->assertSame(['123456789012345678'], $lines);
+
+            // Call extractRawText - should return cached
+            $raw = $extractor->extractRawText($dummyFile, 'text');
+            $this->assertSame("T123 - Test Magaza\n123456789012345678", $raw);
+
+            // Call extractStoreName - uses cached raw text and seeds storeNameCache
+            $storeName = $extractor->extractStoreName($dummyFile, 'T123.pdf');
+            $this->assertSame('T123 - Test Magaza', $storeName);
+
+            $storeCache = $storeNameCacheProp->getValue($extractor);
+            $this->assertArrayHasKey($dummyFile . '|T123.pdf', $storeCache);
+
+            // Test clearCache
+            $extractor->clearCache();
+            $this->assertSame([], $extractCacheProp->getValue($extractor));
+            $this->assertSame([], $rawTextCacheProp->getValue($extractor));
+            $this->assertSame([], $storeNameCacheProp->getValue($extractor));
+        } finally {
+            if (file_exists($dummyFile)) {
+                unlink($dummyFile);
+            }
+        }
+    }
 }
