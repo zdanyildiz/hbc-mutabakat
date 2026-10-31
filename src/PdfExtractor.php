@@ -33,7 +33,7 @@ class PdfExtractor
     }
 
     /** Maximum seconds to wait for the Python subprocess before terminating it. */
-    private const PYTHON_TIMEOUT_SECONDS = 900;
+    private const PYTHON_TIMEOUT_SECONDS = 1800;
 
     public function setUseOcr(bool $useOcr): void
     {

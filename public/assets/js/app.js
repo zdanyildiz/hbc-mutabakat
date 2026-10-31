@@ -169,10 +169,23 @@ document.addEventListener('DOMContentLoaded', () => {
             method: 'POST',
             body: formData
         })
-        .then(response => response.text())
+        .then(response => {
+            if (!response.ok) {
+                if (response.status === 504 || response.status === 408) {
+                    throw new Error('TIMEOUT');
+                }
+                throw new Error('HTTP_' + response.status);
+            }
+            return response.text();
+        })
         .then(text => {
             const cleanedText = text.trim();
-            const data = JSON.parse(cleanedText);
+            let data;
+            try {
+                data = JSON.parse(cleanedText);
+            } catch (jsonErr) {
+                throw new Error('PARSE_ERROR');
+            }
             if (data.success) {
                 // Save data locally for rendering and exporting
                 currentData.storeName = data.store_name;
@@ -225,7 +238,13 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .catch(err => {
             console.error(err);
-            alert('İşlem sırasında beklenmedik bir hata oluştu.');
+            if (err.message === 'TIMEOUT' || err.message === 'HTTP_504') {
+                alert('İşlem süresi uzadığı için sunucu mutabakatı arka planda işlemeye devam ediyor olabilir. Lütfen birkaç dakika sonra sayfayı yenileyip alt kısımdaki "Kayıtlı Geçmiş Mutabakatlar" listesini kontrol edin.');
+            } else if (err.message === 'PARSE_ERROR') {
+                alert('Sunucudan beklenen yanıt alınamadı. İşlem arka planda tamamlanmış olabilir, lütfen sayfayı yenileyip geçmiş mutabakatları kontrol edin.');
+            } else {
+                alert('İşlem sırasında bir hata oluştu: ' + (err.message || 'Lütfen tekrar deneyin.'));
+            }
         })
         .finally(() => {
             // Stop live timer

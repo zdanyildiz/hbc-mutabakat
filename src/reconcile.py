@@ -43,6 +43,7 @@ def ocr_page(img_path: str) -> str:
         import os
         custom_env = os.environ.copy()
         custom_env["OMP_THREAD_LIMIT"] = "1"
+        custom_env["MAGICK_THREAD_LIMIT"] = "1"
         
         # ImageMagick pre-processing to binarize and clean the image
         img_dir = os.path.dirname(img_path)
@@ -57,7 +58,7 @@ def ocr_page(img_path: str) -> str:
                 "-level", "15%,85%",
                 "-sharpen", "0x1.5",
                 clean_img_path
-            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=custom_env, timeout=15)
             tess_input_path = clean_img_path
         except Exception:
             # Fallback to original image if convert is not available
@@ -104,7 +105,7 @@ def extract_ocr_mode(pdf_path: str) -> str:
         subprocess.run([
             "pdftoppm", "-png", "-r", "300",
             pdf_path, os.path.join(temp_dir, "page")
-        ], check=True)
+        ], check=True, timeout=180)
 
         page_images = sorted([
             os.path.join(temp_dir, f)

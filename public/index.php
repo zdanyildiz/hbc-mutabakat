@@ -189,7 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'saas-approve-upgrade')
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
     header('Content-Type: application/json; charset=utf-8');
     header('X-Accel-Buffering: no'); // Nginx'in veriyi buffer'lamasını engeller, anında gönderir
-    @set_time_limit(900); // 15 dakika limit
+    @set_time_limit(1800); // 30 dakika limit
     @ini_set('memory_limit', '512M');
     
     // PHP'nin çıktı önbelleğini kapatıp veriyi anlık göndermesini sağlıyoruz
