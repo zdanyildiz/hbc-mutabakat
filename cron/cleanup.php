@@ -56,10 +56,16 @@ if (is_file($logFile)) {
         @unlink($backupFile); // Varsa eski yedeği sil
         if (@rename($logFile, $backupFile)) {
             Logger::log("[Cron-Cleanup] Log dosyası 10MB boyutunu aştığı için sıfırlandı. Eski loglar app.log.bak dosyasına aktarıldı.");
+            @chmod($logFile, 0666);
+            if (function_exists('posix_getpwnam') && @posix_getpwnam('www-data')) {
+                @chown($logFile, 'www-data');
+            }
         }
     }
 }
 
 Logger::log("[Cron-Cleanup] Temizleme tamamlandı. Toplam silinen geçici dosya adedi: {$deletedCount}");
+if (is_file($logFile)) {
+    @chmod($logFile, 0666);
+}
 echo "Temizleme tamamlandı. Toplam silinen geçici dosya adedi: {$deletedCount}\n";
-
