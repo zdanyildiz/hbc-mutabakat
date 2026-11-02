@@ -99,24 +99,27 @@ def extract_text_mode(pdf_path: str) -> str:
     return result.stdout
 
 def extract_ocr_mode(pdf_path: str) -> str:
+    lower_path = pdf_path.lower()
+    if lower_path.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff")):
+        return ocr_page(pdf_path)
     temp_dir = tempfile.mkdtemp()
     try:
         subprocess.run([
-            "pdftoppm", "-png", "-r", "300",
+            "pdftoppm", "-jpeg", "-r", "150",
             pdf_path, os.path.join(temp_dir, "page")
         ], check=True)
 
         page_images = sorted([
             os.path.join(temp_dir, f)
             for f in os.listdir(temp_dir)
-            if f.startswith("page-") and f.endswith(".png")
+            if f.startswith("page-") and (f.endswith(".jpg") or f.endswith(".jpeg") or f.endswith(".png"))
         ])
 
         if not page_images:
             raise RuntimeError("No pages extracted from PDF.")
 
         full_text_parts = [None] * len(page_images)
-        max_workers = min(2, len(page_images))
+        max_workers = min(16, len(page_images))
 
         sys.stderr.write(f"OCR_PROGRESS: Toplam {len(page_images)} sayfa görsele dönüştürüldü. OCR işlemi başlıyor...\n")
         sys.stderr.flush()
