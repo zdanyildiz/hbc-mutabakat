@@ -24,6 +24,10 @@ class Logger
         }
         $timestamp = date('Y-m-d H:i:s');
         $formatted = sprintf("[%s] %s\n", $timestamp, $message);
+        $fileExists = file_exists((string)self::$logFile);
         @file_put_contents((string)self::$logFile, $formatted, FILE_APPEND);
+        if (!$fileExists && file_exists((string)self::$logFile)) {
+            @chmod((string)self::$logFile, 0666);
+        }
     }
 }

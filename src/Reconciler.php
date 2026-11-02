@@ -35,8 +35,7 @@ class Reconciler
 
     public function __construct(
         private readonly ExcelExtractor $excelExtractor,
-        private readonly PdfExtractor $pdfExtractor,
-        private readonly ?SubscriptionService $subscriptionService = null
+        private readonly PdfExtractor $pdfExtractor
     ) {}
 
     /**
@@ -51,23 +50,13 @@ class Reconciler
      * @param string $excelPath
      * @param string|array<string> $pdfPaths
      * @param string|int $companyId
-     * @param int|null $tenantId
      * @return ReconciliationResult
      */
     public function reconcile(
         string $excelPath,
         string|array $pdfPaths,
-        string|int $companyId = '1',
-        ?int $tenantId = null
+        string|int $companyId = '1'
     ): ReconciliationResult {
-        $pdfPaths = (array)$pdfPaths;
-        $effectiveTenantId = $tenantId ?? TenantContext::getTenantId();
-        $ocrUnits = max(1, count($pdfPaths));
-
-        if ($this->subscriptionService !== null && $effectiveTenantId !== null) {
-            $this->subscriptionService->assertCanProcessOcr($effectiveTenantId, $ocrUnits);
-        }
-
         $allTerminalBarcodes = $this->excelExtractor->extract($excelPath);
 
         $lengthRule = CompanyRules::getLengthRule($companyId);
@@ -86,6 +75,7 @@ class Reconciler
             }
         }
 
+        $pdfPaths = (array)$pdfPaths;
         $pdfLines = [];
         foreach ($pdfPaths as $pdfPath) {
             $extracted = $this->pdfExtractor->extract($pdfPath);
@@ -402,14 +392,6 @@ class Reconciler
         }
         $missingInStore = $stillMissingAfterFuzzy;
         $extraInStore = array_values($extraInStore);
-
-        if ($this->subscriptionService !== null && $effectiveTenantId !== null) {
-            $this->subscriptionService->consumeOcrQuota(
-                $effectiveTenantId,
-                $ocrUnits,
-                'Reconcile-' . (string)$companyId
-            );
-        }
 
         return new ReconciliationResult(
             $terminalBarcodes,

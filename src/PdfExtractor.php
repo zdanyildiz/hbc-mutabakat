@@ -18,9 +18,22 @@ class PdfExtractor
     private array $mismatches = [];
 
     private bool $useOcr = true;
+    /** @var array<string, array<string>> */
+    private array $extractCache = [];
+    /** @var array<string, string> */
+    private array $rawTextCache = [];
+    /** @var array<string, string> */
+    private array $storeNameCache = [];
+
+    public function clearCache(): void
+    {
+        $this->extractCache = [];
+        $this->rawTextCache = [];
+        $this->storeNameCache = [];
+    }
 
     /** Maximum seconds to wait for the Python subprocess before terminating it. */
-    private const PYTHON_TIMEOUT_SECONDS = 900;
+    private const PYTHON_TIMEOUT_SECONDS = 1800;
 
     public function setUseOcr(bool $useOcr): void
     {
@@ -65,16 +78,25 @@ class PdfExtractor
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
 
-        // Try Python extraction first
         $mode = $this->useOcr ? 'ocr' : 'text';
+        $cacheKey = $filePath . '|' . $mode;
+        if (isset($this->extractCache[$cacheKey])) {
+            \App\Logger::log("[PdfExtractor] Sonuç önbellekten alındı (0 ms): " . basename($filePath) . " ({$mode})");
+            return $this->extractCache[$cacheKey];
+        }
+
+        // Try Python extraction first
         $pythonResult = $this->extractWithPython($filePath, $mode);
         if ($pythonResult !== null) {
+            $this->extractCache[$cacheKey] = $pythonResult;
             return $pythonResult;
         }
 
         // Fallback to optimized native PHP extraction
         if ($this->useOcr) {
-            return $this->extractOcrPhp($filePath);
+            $ocrResult = $this->extractOcrPhp($filePath);
+            $this->extractCache[$cacheKey] = $ocrResult;
+            return $ocrResult;
         }
 
         $pdfStart = microtime(true);
@@ -116,6 +138,7 @@ class PdfExtractor
         $elapsed = round(microtime(true) - $pdfStart, 4);
         \App\Logger::log("[PdfExtractor-Text] Tamamlandı - Süre: {$elapsed} saniye | Benzersiz Barkod: " . count($barcodes));
 
+        $this->extractCache[$cacheKey] = $barcodes;
         return $barcodes;
     }
 
@@ -133,12 +156,32 @@ class PdfExtractor
             return 'Bilinmeyen Mağaza';
         }
 
-        $parser = new Parser();
+        $cacheKey = $filePath . '|' . ($originalName ?? '');
+        if (isset($this->storeNameCache[$cacheKey])) {
+            return $this->storeNameCache[$cacheKey];
+        }
+
+        $text = '';
         try {
-            $pdf = $parser->parseFile($filePath);
-            $text = $pdf->getText();
+            $text = $this->extractRawText($filePath, 'text');
         } catch (\Exception $e) {
-            return 'Bilinmeyen Mağaza';
+            $parser = new Parser();
+            try {
+                $pdf = $parser->parseFile($filePath);
+                $text = $pdf->getText();
+            } catch (\Exception $e2) {
+                return 'Bilinmeyen Mağaza';
+            }
+        }
+
+        if ($text === '') {
+            $parser = new Parser();
+            try {
+                $pdf = $parser->parseFile($filePath);
+                $text = $pdf->getText();
+            } catch (\Exception $e) {
+                return 'Bilinmeyen Mağaza';
+            }
         }
 
         $lines = explode("\n", $text);
@@ -172,7 +215,9 @@ class PdfExtractor
                             '|S' => 'IS',
                             '|' => 'I',
                         ]);
-                        return $filename . ' - ' . $name;
+                        $res = $filename . ' - ' . $name;
+                        $this->storeNameCache[$cacheKey] = $res;
+                        return $res;
                     }
                 }
             }
@@ -188,7 +233,9 @@ class PdfExtractor
                             '|S' => 'IS',
                             '|' => 'I',
                         ]);
-                        return $filename . ' - ' . $name;
+                        $res = $filename . ' - ' . $name;
+                        $this->storeNameCache[$cacheKey] = $res;
+                        return $res;
                     }
                 }
             }
@@ -216,6 +263,7 @@ class PdfExtractor
                     '|' => 'I',
                 ]);
                 if (strlen($cleanedStore) > 3 && !preg_match('/^[^\w\s]+$/', $cleanedStore)) {
+                    $this->storeNameCache[$cacheKey] = $cleanedStore;
                     return $cleanedStore;
                 }
             }
@@ -226,10 +274,14 @@ class PdfExtractor
         }
 
         if (preg_match('/^T\d+$/i', $filename)) {
-            return strtoupper($filename);
+            $res = strtoupper($filename);
+            $this->storeNameCache[$cacheKey] = $res;
+            return $res;
         }
 
-        return 'Bilinmeyen Mağaza';
+        $res = 'Bilinmeyen Mağaza';
+        $this->storeNameCache[$cacheKey] = $res;
+        return $res;
     }
 
     /**
@@ -582,6 +634,11 @@ class PdfExtractor
             throw new \InvalidArgumentException("PDF dosyası bulunamadı: {$filePath}");
         }
 
+        $cacheKey = $filePath . '|' . $mode;
+        if (isset($this->rawTextCache[$cacheKey])) {
+            return $this->rawTextCache[$cacheKey];
+        }
+
         // Try Python extraction first with --raw flag
         $pythonScript = dirname(__DIR__) . '/src/reconcile.py';
         if (file_exists($pythonScript)) {
@@ -598,7 +655,9 @@ class PdfExtractor
             if ($result !== null && !$result['timed_out']) {
                 $data = json_decode(trim($result['stdout']), true);
                 if (is_array($data) && isset($data['success']) && $data['success'] === true) {
-                    return $data['raw_text'] ?? '';
+                    $raw = $data['raw_text'] ?? '';
+                    $this->rawTextCache[$cacheKey] = $raw;
+                    return $raw;
                 }
             } elseif ($result !== null && $result['timed_out']) {
                 \App\Logger::log("[PdfExtractor-Python-Raw] HATA: İşlem " . self::PYTHON_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
@@ -614,7 +673,9 @@ class PdfExtractor
         $parser = new \Smalot\PdfParser\Parser();
         try {
             $pdf = $parser->parseFile($filePath);
-            return $pdf->getText();
+            $raw = $pdf->getText();
+            $this->rawTextCache[$cacheKey] = $raw;
+            return $raw;
         } catch (\Exception $e) {
             throw new \RuntimeException("PDF dosyası ayrıştırılamadı (Smalot): " . $e->getMessage());
         }
