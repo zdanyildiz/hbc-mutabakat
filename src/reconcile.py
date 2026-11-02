@@ -100,20 +100,17 @@ def extract_text_mode(pdf_path: str) -> str:
     return result.stdout
 
 def extract_ocr_mode(pdf_path: str) -> str:
-    lower_path = pdf_path.lower()
-    if lower_path.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff")):
-        return ocr_page(pdf_path)
     temp_dir = tempfile.mkdtemp()
     try:
         subprocess.run([
-            "pdftoppm", "-jpeg", "-r", "150",
+            "pdftoppm", "-png", "-r", "300",
             pdf_path, os.path.join(temp_dir, "page")
         ], check=True, timeout=180)
 
         page_images = sorted([
             os.path.join(temp_dir, f)
             for f in os.listdir(temp_dir)
-            if f.startswith("page-") and (f.endswith(".jpg") or f.endswith(".jpeg") or f.endswith(".png"))
+            if f.startswith("page-") and f.endswith(".png")
         ])
 
         if not page_images:
