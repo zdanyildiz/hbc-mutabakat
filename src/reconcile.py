@@ -118,7 +118,7 @@ def extract_ocr_mode(pdf_path: str) -> str:
 
         full_text_parts = [None] * len(page_images)
         cpu_count = os.cpu_count() or 4
-        max_workers = min(max(4, min(8, cpu_count)), len(page_images))
+        max_workers = min(max(4, min(16, cpu_count)), len(page_images))
 
         sys.stderr.write(f"OCR_PROGRESS: Toplam {len(page_images)} sayfa görsele dönüştürüldü. OCR işlemi başlıyor...\n")
         sys.stderr.flush()

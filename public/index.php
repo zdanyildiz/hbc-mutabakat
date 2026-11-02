@@ -2,6 +2,304 @@
 
 declare(strict_types=1);
 
+// Load .env configuration
+$envFile = dirname(__DIR__) . '/.env';
+$envVars = [];
+if (is_file($envFile) && is_readable($envFile)) {
+    $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if (is_array($lines)) {
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
+                continue;
+            }
+            [$k, $v] = explode('=', $line, 2);
+            $k = trim($k);
+            $v = trim($v);
+            if ((str_starts_with($v, '"') && str_ends_with($v, '"')) || (str_starts_with($v, "'") && str_ends_with($v, "'"))) {
+                $v = substr($v, 1, -1);
+            }
+            $envVars[$k] = $v;
+        }
+    }
+}
+
+$authEmail = $envVars['AUTH_EMAIL'] ?? (getenv('AUTH_EMAIL') ?: '');
+$authPassword = $envVars['AUTH_PASSWORD'] ?? (getenv('AUTH_PASSWORD') ?: '');
+$authSecret = $envVars['AUTH_SECRET'] ?? (getenv('AUTH_SECRET') ?: 'hbc_secret_key_2026');
+
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
+    || (($_SERVER['SERVER_PORT'] ?? 80) == 443);
+
+if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
+    session_name('HBC_MUTABAKAT_SESSID');
+    ini_set('session.name', 'HBC_MUTABAKAT_SESSID');
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'domain' => '',
+        'secure' => $isHttps,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    session_start();
+}
+
+$rememberCookieName = 'hbc_remember';
+$rememberDays = 30;
+
+// Auto-login via "Beni Hatırla" cookie if session is not active
+if (empty($_SESSION['hbc_auth']) && !empty($_COOKIE[$rememberCookieName]) && $authEmail !== '' && $authPassword !== '') {
+    $decoded = base64_decode((string)$_COOKIE[$rememberCookieName], true);
+    if (is_string($decoded)) {
+        $parts = explode('|', $decoded);
+        if (count($parts) === 3) {
+            [$cookieEmail, $cookieExpires, $cookieHmac] = $parts;
+            $expiresInt = (int)$cookieExpires;
+            if ($expiresInt > time() && strtolower($cookieEmail) === strtolower($authEmail)) {
+                $expectedHmac = hash_hmac('sha256', strtolower($authEmail) . '|' . $expiresInt, $authSecret . '|' . $authPassword);
+                if (hash_equals($expectedHmac, $cookieHmac)) {
+                    $_SESSION['hbc_auth'] = true;
+                    $_SESSION['hbc_user'] = $authEmail;
+                }
+            }
+        }
+    }
+}
+
+$loginError = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_GET['action'] ?? '') === 'login') {
+    $email = trim((string)($_POST['email'] ?? ''));
+    $password = (string)($_POST['password'] ?? '');
+    $rememberMe = !empty($_POST['remember_me']);
+
+    if ($authEmail !== '' && $authPassword !== '' && strtolower($email) === strtolower($authEmail) && hash_equals($authPassword, $password)) {
+        $_SESSION['hbc_auth'] = true;
+        $_SESSION['hbc_user'] = $authEmail;
+        $_SESSION['hbc_login_at'] = time();
+
+        if ($rememberMe) {
+            $expires = time() + (86400 * $rememberDays);
+            $hmac = hash_hmac('sha256', strtolower($authEmail) . '|' . $expires, $authSecret . '|' . $authPassword);
+            $token = base64_encode($authEmail . '|' . $expires . '|' . $hmac);
+            setcookie($rememberCookieName, $token, [
+                'expires' => $expires,
+                'path' => '/',
+                'domain' => '',
+                'secure' => $isHttps,
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+        } else {
+            setcookie($rememberCookieName, '', [
+                'expires' => time() - 42000,
+                'path' => '/',
+                'domain' => '',
+                'secure' => $isHttps,
+                'httponly' => true,
+                'samesite' => 'Lax',
+            ]);
+        }
+
+        header('Location: index.php');
+        exit;
+    } else {
+        $loginError = 'Geçersiz e-posta adresi veya şifre girdiniz.';
+    }
+}
+
+if (($_GET['action'] ?? '') === 'logout') {
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $params = session_get_cookie_params();
+        setcookie(
+            session_name(),
+            '',
+            time() - 42000,
+            $params['path'],
+            $params['domain'],
+            $params['secure'],
+            $params['httponly']
+        );
+    }
+    setcookie($rememberCookieName, '', [
+        'expires' => time() - 42000,
+        'path' => '/',
+        'domain' => '',
+        'secure' => $isHttps,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    session_destroy();
+    header('Location: index.php');
+    exit;
+}
+
+$isAuthenticated = !empty($_SESSION['hbc_auth']);
+
+if (!$isAuthenticated) {
+    $isLoginAttempt = ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_GET['action'] ?? '') === 'login' || isset($_POST['password'])));
+    $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest');
+
+    if (!$isLoginAttempt && ($_SERVER['REQUEST_METHOD'] === 'POST' || $isAjax)) {
+        header('Content-Type: application/json; charset=utf-8', true, 401);
+        echo json_encode(['success' => false, 'message' => 'Oturum süresi doldu veya yetkisiz erişim. Lütfen giriş yapın.']);
+        exit;
+    }
+?>
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Giriş Yap — HBC Nakliyat Mutabakat Portalı</title>
+    <link rel="stylesheet" href="assets/css/style.css?v=<?= time() ?>">
+    <style>
+        .login-wrapper {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .login-card {
+            width: 100%;
+            max-width: 440px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2.5rem;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .login-logo {
+            font-size: 3rem;
+            margin-bottom: 0.75rem;
+        }
+        .login-header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin: 0 0 0.5rem 0;
+        }
+        .login-header p {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin: 0;
+        }
+        .login-form .form-group {
+            margin-bottom: 1.25rem;
+        }
+        .login-form label.field-label {
+            display: block;
+            font-size: 0.88rem;
+            font-weight: 600;
+            margin-bottom: 0.4rem;
+            color: var(--text-main);
+        }
+        .login-form input[type="email"],
+        .login-form input[type="password"] {
+            width: 100%;
+            padding: 0.8rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-main);
+            color: var(--text-main);
+            font-size: 0.95rem;
+            outline: none;
+            transition: border-color 0.2s;
+            box-sizing: border-box;
+        }
+        .login-form input[type="email"]:focus,
+        .login-form input[type="password"]:focus {
+            border-color: var(--color-primary);
+        }
+        .remember-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1.25rem;
+        }
+        .remember-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+            color: var(--text-main);
+            cursor: pointer;
+            user-select: none;
+        }
+        .remember-label input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--color-primary, #3182ce);
+            cursor: pointer;
+        }
+        .login-error {
+            background: rgba(229, 62, 62, 0.15);
+            color: #fc8181;
+            border: 1px solid rgba(229, 62, 62, 0.3);
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            margin-bottom: 1.25rem;
+            text-align: center;
+        }
+        .login-footer {
+            margin-top: 2rem;
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="login-wrapper">
+        <div class="login-card">
+            <div class="login-header">
+                <div class="login-logo">🚚</div>
+                <h1>HBC Nakliyat</h1>
+                <p>Operasyon ve Mutabakat Portalı Girişi</p>
+            </div>
+            
+            <?php if (!empty($loginError)): ?>
+                <div class="login-error"><?= htmlspecialchars($loginError) ?></div>
+            <?php endif; ?>
+
+            <form action="index.php?action=login" method="POST" class="login-form">
+                <div class="form-group">
+                    <label for="email" class="field-label">Yetkili E-Posta</label>
+                    <input type="email" id="email" name="email" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>" placeholder="ornek@hbcnakliyat.com" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="password" class="field-label">Şifre</label>
+                    <input type="password" id="password" name="password" required autocomplete="current-password" placeholder="••••••••">
+                </div>
+                <div class="remember-row">
+                    <label class="remember-label" for="remember_me">
+                        <input type="checkbox" id="remember_me" name="remember_me" value="1" checked>
+                        <span>Beni Hatırla</span>
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.85rem; font-weight: 700; margin-top: 0.25rem;">
+                    Güvenli Giriş Yap
+                </button>
+            </form>
+
+            <div class="login-footer">
+                &copy; <?= date('Y') ?> HBC Nakliyat Lojistik A.Ş. • Tüm hakları saklıdır.
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+<?php
+    exit;
+}
+
 // Prevent browser/server caching entirely
 header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
 header("Cache-Control: post-check=0, pre-check=0", false);
@@ -9,32 +307,9 @@ header("Pragma: no-cache");
 
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 
-use App\Database;
 use App\ExcelExtractor;
 use App\PdfExtractor;
 use App\Reconciler;
-use App\SaasPlanCatalog;
-use App\SaasQuotaException;
-use App\SubscriptionService;
-use App\TenantContext;
-use App\TenantMiddleware;
-
-if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
-    session_name('HBC_MUTABAKAT_SESSID');
-    ini_set('session.name', 'HBC_MUTABAKAT_SESSID');
-    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
-        || (($_SERVER['SERVER_PORT'] ?? 80) == 443);
-    session_set_cookie_params([
-        'lifetime' => 0,
-        'path' => '/',
-        'domain' => '',
-        'secure' => $isHttps,
-        'httponly' => true,
-        'samesite' => 'Lax'
-    ]);
-    @session_start();
-}
 
 // Initialize config
 $config = require dirname(__DIR__) . '/config.php';
@@ -44,153 +319,14 @@ if (!is_dir($config['upload_dir'])) {
     mkdir($config['upload_dir'], 0777, true);
 }
 
-$db = new Database($config['db']);
-$dbEnabled = $db->isEnabled();
-if ($dbEnabled) {
-    $db->initSchema();
-}
-
-$approvalSecret = isset($config['deploy_secret']) && is_string($config['deploy_secret'])
-    ? $config['deploy_secret']
-    : 'hbcnakliyat_secret_token_123';
-$subscriptionService = new SubscriptionService($db, $approvalSecret);
-$tenantMiddleware = new TenantMiddleware($subscriptionService);
-
-/** @var array<string, mixed> $sessionData */
-$sessionData = isset($_SESSION) && is_array($_SESSION) ? $_SESSION : [];
-$activeTenant = $tenantMiddleware->resolve($_REQUEST, $_SERVER, $sessionData);
-
-$action = isset($_GET['action']) && is_string($_GET['action']) ? $_GET['action'] : '';
-
-// SaaS API: Get 2026 Plan Catalog
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'saas-plans') {
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode([
-        'success' => true,
-        'plans' => SaasPlanCatalog::getAllPlans(),
-        'paid_plans' => SaasPlanCatalog::getPaidPlans(),
-    ], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-// SaaS API: Get Active Tenant & Subscription Status
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'saas-status') {
-    header('Content-Type: application/json; charset=utf-8');
-    $currentSub = $activeTenant !== null ? $subscriptionService->getCurrentSubscription($activeTenant->id) : null;
-    echo json_encode([
-        'success' => true,
-        'tenant' => $activeTenant !== null ? $activeTenant->toArray() : null,
-        'subscription' => $currentSub !== null ? $currentSub->toArray() : null,
-        'plans' => SaasPlanCatalog::getAllPlans(),
-    ], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-// SaaS API: Self-Service Tenant Registration (90-Day / 50 OCR Trial)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'saas-register') {
-    header('Content-Type: application/json; charset=utf-8');
-    try {
-        $registeredTenant = $subscriptionService->registerTenantWithTrial($_POST);
-        if (isset($_SESSION) && is_array($_SESSION)) {
-            $_SESSION['tenant_id'] = $registeredTenant->id;
-        }
-        $sub = $registeredTenant->subscription;
-        echo json_encode([
-            'success' => true,
-            'message' => '90 Gün / 50 Adet Koli & İrsaliye OCR Ücretsiz Deneme aboneliğiniz başarıyla başlatıldı.',
-            'tenant' => $registeredTenant->toArray(),
-            'subscription' => $sub !== null ? $sub->toArray() : null,
-        ], JSON_UNESCAPED_UNICODE);
-    } catch (\Throwable $e) {
-        echo json_encode([
-            'success' => false,
-            'message' => $e->getMessage(),
-        ], JSON_UNESCAPED_UNICODE);
-    }
-    exit;
-}
-
-// SaaS API: Request Plan Upgrade (pending_payment)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'saas-upgrade') {
-    header('Content-Type: application/json; charset=utf-8');
-    try {
-        $targetTenantId = isset($_POST['tenant_id']) && is_numeric($_POST['tenant_id'])
-            ? (int)$_POST['tenant_id']
-            : ($activeTenant !== null ? $activeTenant->id : 0);
-        if ($targetTenantId <= 0) {
-            throw new \InvalidArgumentException('Paket yükseltme için önce firma kaydı (tenant_id) gereklidir.');
-        }
-        $planCode = isset($_POST['plan_code']) && is_string($_POST['plan_code'])
-            ? trim($_POST['plan_code'])
-            : SaasPlanCatalog::PLAN_LOGISTICS_PRO;
-        $billingCycle = isset($_POST['billing_cycle']) && is_string($_POST['billing_cycle'])
-            ? trim($_POST['billing_cycle'])
-            : SaasPlanCatalog::CYCLE_YEARLY;
-        $paymentRef = isset($_POST['payment_reference']) && is_string($_POST['payment_reference'])
-            ? trim($_POST['payment_reference'])
-            : null;
-
-        $pendingSub = $subscriptionService->requestPlanUpgrade(
-            $targetTenantId,
-            $planCode,
-            $billingCycle,
-            $paymentRef
-        );
-
-        echo json_encode([
-            'success' => true,
-            'message' => 'Paket yükseltme talebiniz oluşturuldu (pending_payment). Ödeme/havale onaylandıktan sonra paketiniz aktifleşecektir.',
-            'subscription' => $pendingSub->toArray(),
-        ], JSON_UNESCAPED_UNICODE);
-    } catch (\Throwable $e) {
-        echo json_encode([
-            'success' => false,
-            'message' => $e->getMessage(),
-        ], JSON_UNESCAPED_UNICODE);
-    }
-    exit;
-}
-
-// SaaS API: Approve Plan Upgrade (Admin / HMAC Approval -> active)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'saas-approve-upgrade') {
-    header('Content-Type: application/json; charset=utf-8');
-    try {
-        $subOrTenantId = isset($_POST['subscription_id']) && is_numeric($_POST['subscription_id'])
-            ? (int)$_POST['subscription_id']
-            : (isset($_POST['tenant_id']) && is_numeric($_POST['tenant_id']) ? (int)$_POST['tenant_id'] : 0);
-        $paymentRef = isset($_POST['payment_reference']) && is_string($_POST['payment_reference'])
-            ? trim($_POST['payment_reference'])
-            : null;
-        $hmacSig = isset($_SERVER['HTTP_X_APPROVE_SIGNATURE']) && is_string($_SERVER['HTTP_X_APPROVE_SIGNATURE'])
-            ? trim($_SERVER['HTTP_X_APPROVE_SIGNATURE'])
-            : (isset($_POST['hmac_signature']) && is_string($_POST['hmac_signature']) ? trim($_POST['hmac_signature']) : null);
-        $adminKey = isset($_POST['admin_key']) && is_string($_POST['admin_key']) ? trim($_POST['admin_key']) : '';
-
-        if ($hmacSig === null && $adminKey !== $approvalSecret) {
-            throw new \RuntimeException('Ödeme/paket aktivasyonu için geçerli HMAC imzası veya yönetici anahtarı gereklidir.');
-        }
-
-        $approvedSub = $subscriptionService->approvePlanUpgrade($subOrTenantId, $paymentRef, $hmacSig);
-        echo json_encode([
-            'success' => true,
-            'message' => 'Paket yükseltme onaylandı, abonelik aktif edildi ve OCR kotası güncellendi.',
-            'subscription' => $approvedSub->toArray(),
-        ], JSON_UNESCAPED_UNICODE);
-    } catch (\Throwable $e) {
-        echo json_encode([
-            'success' => false,
-            'message' => $e->getMessage(),
-        ], JSON_UNESCAPED_UNICODE);
-    }
-    exit;
-}
+$action = $_GET['action'] ?? '';
 
 // Handle Reconcile Request via AJAX
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
+    session_write_close();
     header('Content-Type: application/json; charset=utf-8');
     header('X-Accel-Buffering: no'); // Nginx'in veriyi buffer'lamasını engeller, anında gönderir
-    @set_time_limit(1800); // 30 dakika limit
-    @ini_set('memory_limit', '512M');
+    @set_time_limit(600); // 10 dakika limit
     
     // PHP'nin çıktı önbelleğini kapatıp veriyi anlık göndermesini sağlıyoruz
     while (ob_get_level() > 0) {
@@ -253,12 +389,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
             exit;
         }
 
-        $requestedOcrUnits = count($pdfPaths);
-        $currentTenantId = TenantContext::getTenantId();
-        if ($currentTenantId !== null) {
-            $subscriptionService->assertCanProcessOcr($currentTenantId, $requestedOcrUnits);
-        }
-
         $excelPath = $excelFile['tmp_name'];
 
         $excelExtractor = new ExcelExtractor();
@@ -276,39 +406,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
 
         $companyId = trim((string)($_POST['company_id'] ?? '1'));
 
-        $result = $reconciler->reconcile($excelPath, $pdfPaths, $companyId, $currentTenantId);
+        $result = $reconciler->reconcile($excelPath, $pdfPaths, $companyId);
 
         // Generate barcode to store mapping
         $excelMap = $excelExtractor->extractMap($excelPath);
         $barcodeStores = $excelMap;
         foreach ($pdfPaths as $path) {
-            // Her PDF barkodunu (sadece rakam) kendi mağaza adına eşle. Böylece "Fazla Koliler"
-            // satırları (yalnızca PDF'te bulunan barkodlar) doğru mağaza adını gösterir.
-            // Orijinal dosya adını (T410.pdf) geçiyoruz; aksi halde "phpXXXX" geçici adı sızar.
             $pdfMap = $pdfExtractor->extractBarcodeStoreMap($path, $pdfOriginalFilenames[$path] ?? null);
             foreach ($pdfMap as $barcode => $pdfStoreName) {
                 if (!isset($barcodeStores[$barcode])) {
                     $barcodeStores[$barcode] = $pdfStoreName;
                 }
             }
-        }
-
-        $savedId = null;
-        if ($dbEnabled) {
-            $dbStart = microtime(true);
-            $savedId = $db->save($storeName, $result, $companyId, $currentTenantId);
-            $dbElapsed = round(microtime(true) - $dbStart, 4);
-            \App\Logger::log("Veritabanı kayıt işlemi tamamlandı - Süre: {$dbElapsed} saniye (ID: {$savedId})");
-        }
-
-        $updatedSubscription = null;
-        if ($currentTenantId !== null) {
-            $updatedSubscription = $subscriptionService->consumeOcrQuota(
-                $currentTenantId,
-                $requestedOcrUnits,
-                $storeName,
-                $savedId
-            );
         }
 
         $elapsed = round(microtime(true) - $startTime, 4);
@@ -319,54 +428,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         echo json_encode([
             'success' => true,
             'store_name' => $storeName,
-            'saved_id' => $savedId,
+            'saved_id' => null,
             'result' => $result->toArray(),
             'barcode_stores' => $barcodeStores,
             'pdf_original_words' => $pdfExtractor->getBarcodeToOriginalMap(),
             'pdf_mismatches' => $pdfExtractor->getMismatches(),
             'elapsed_time' => $elapsed,
-            'saas_subscription' => $updatedSubscription !== null ? $updatedSubscription->toArray() : null,
         ]);
-        exit;
-    } catch (SaasQuotaException $qe) {
-        \App\Logger::log("KOTA / ABONELİK ENGELİ: [" . $qe->getErrorCode() . "] " . $qe->getMessage());
-        echo json_encode(array_merge($qe->toPayload(), [
-            'plans' => SaasPlanCatalog::getPaidPlans(),
-        ]), JSON_UNESCAPED_UNICODE);
         exit;
     } catch (\Throwable $e) {
         \App\Logger::log("HATA OLUŞTU: [" . get_class($e) . "] " . $e->getMessage() . " | Yer: " . $e->getFile() . ":" . $e->getLine());
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
         exit;
     }
-}
-
-// Handle Get Report Request via AJAX
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get-report') {
-    header('Content-Type: application/json; charset=utf-8');
-    
-    $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
-    if ($id > 0 && $dbEnabled) {
-        $report = $db->getById($id, TenantContext::getTenantId());
-        if ($report !== null) {
-            /** @var array{
-             *     matched: array<string>,
-             *     missingInStore: array<string>,
-             *     extraInStore: array<string>,
-             *     suspectedMatches?: array<array{terminal_barcode: string, store_barcode: string, distance: int}>
-             * } $resultArray */
-            $resultArray = json_decode($report['results_json'], true);
-            echo json_encode([
-                'success' => true,
-                'store_name' => $report['store_name'],
-                'result' => $resultArray,
-            ]);
-            exit;
-        }
-    }
-    
-    echo json_encode(['success' => false, 'message' => 'Rapor bulunamadı veya veritabanı aktif değil.']);
-    exit;
 }
 
 // Handle Export Excel for dynamic data
@@ -410,111 +484,13 @@ if ($action === 'export-excel' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 }
-
-// Handle Export Excel for saved reports
-if ($action === 'export-excel-saved') {
-    $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
-    if ($id > 0 && $dbEnabled) {
-        $report = $db->getById($id, TenantContext::getTenantId());
-        if ($report !== null) {
-            /** @var array{
-             *     matched: array<string>,
-             *     missingInStore: array<string>,
-             *     extraInStore: array<string>,
-             *     suspectedMatches?: array<array{terminal_barcode: string, store_barcode: string, distance: int}>
-             * } $data */
-            $data = json_decode($report['results_json'], true);
-            
-            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-            $sheet = $spreadsheet->getActiveSheet();
-            
-            $sheet->setCellValue('A1', 'El Terminali (Excel) Barkodu');
-            $sheet->setCellValue('B1', 'PDF Barkodu');
-            $sheet->setCellValue('C1', 'Durum');
-            $sheet->setCellValue('D1', 'Açıklama');
-            
-            $sheet->getStyle('A1:D1')->getFont()->setBold(true);
-            
-            $rowIdx = 2;
-            foreach ($data['missingInStore'] as $barcode) {
-                $sheet->setCellValueExplicit('A' . $rowIdx, $barcode, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                $sheet->setCellValue('B' . $rowIdx, '-');
-                $sheet->setCellValue('C' . $rowIdx, 'Eksik');
-                $sheet->setCellValue('D' . $rowIdx, 'Terminalde okutulmuş ancak Mağaza PDF\'inde bulunamadı.');
-                $rowIdx++;
-            }
-            foreach ($data['extraInStore'] as $barcode) {
-                $sheet->setCellValue('A' . $rowIdx, '-');
-                $sheet->setCellValueExplicit('B' . $rowIdx, $barcode, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                $sheet->setCellValue('C' . $rowIdx, 'Fazla');
-                $sheet->setCellValue('D' . $rowIdx, 'Mağaza PDF\'inde mevcut ancak Terminalde okutulmamış.');
-                $rowIdx++;
-            }
-            foreach ($data['matched'] as $barcode) {
-                $sheet->setCellValueExplicit('A' . $rowIdx, $barcode, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                $sheet->setCellValueExplicit('B' . $rowIdx, $barcode, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                $sheet->setCellValue('C' . $rowIdx, 'Eşleşti');
-                $sheet->setCellValue('D' . $rowIdx, 'Her iki listede de başarıyla eşleşti.');
-                $rowIdx++;
-            }
-            if (isset($data['suspectedMatches'])) {
-                foreach ($data['suspectedMatches'] as $suspect) {
-                    $sheet->setCellValueExplicit('A' . $rowIdx, $suspect['terminal_barcode'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                    $sheet->setCellValueExplicit('B' . $rowIdx, $suspect['store_barcode'], \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                    $sheet->setCellValue('C' . $rowIdx, 'Şüpheli');
-                    $sheet->setCellValue('D' . $rowIdx, 'Yakın eşleşme (Mesafe: ' . $suspect['distance'] . ')');
-                    $rowIdx++;
-                }
-            }
-            
-            foreach (range('A', 'D') as $col) {
-                $sheet->getColumnDimension($col)->setAutoSize(true);
-            }
-            
-            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            header('Content-Disposition: attachment; filename="mutabakat_' . preg_replace('/[^a-zA-Z0-9]/', '_', $report['store_name']) . '.xlsx"');
-            header('Cache-Control: max-age=0');
-            
-            $writer = \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, 'Xlsx');
-            $writer->save('php://output');
-            exit;
-        }
-    }
-    
-    header('HTTP/1.1 404 Not Found');
-    echo 'Rapor bulunamadı veya veritabanı aktif değil.';
-    exit;
-}
-
-// Get past reports if DB is enabled
-/** @var array<array{
- *     id: int,
- *     tenant_id: int,
- *     store_name: string,
- *     terminal_count: int,
- *     store_count: int,
- *     matched_count: int,
- *     missing_count: int,
- *     extra_count: int,
- *     results_json: string,
- *     created_at: string
- * }> $pastReports */
-$pastReports = [];
-if ($dbEnabled) {
-    $pastReports = $db->getAll(TenantContext::getTenantId());
-}
-
-$activeSubscription = $activeTenant !== null
-    ? $subscriptionService->getCurrentSubscription($activeTenant->id)
-    : null;
-$allSaasPlans = SaasPlanCatalog::getAllPlans();
 ?>
 <!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HBC Mutabakat - Lojistik & Perakende OCR Koli Mutabakatı (Multi-Tenant SaaS)</title>
+    <title>HBC Mutabakat - Hızlı & Deterministik Karşılaştırma Modülü</title>
     <meta name="description" content="El terminali verileri ile mağaza PDF çıktılarını saniyeler içinde karşılaştıran deterministik veri mutabakat modülü.">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -532,72 +508,24 @@ $allSaasPlans = SaasPlanCatalog::getAllPlans();
             <div class="logo">
                 <span class="logo-icon">⚡</span>
                 <div class="logo-text">
-                    <h1>HBC Mutabakat SaaS</h1>
-                    <p>B2B Lojistik & Perakende Koli / İrsaliye OCR Mutabakat Platformu</p>
+                    <h1>HBC Mutabakat</h1>
+                    <p>Deterministik Veri Eşleştirme Motoru</p>
                 </div>
             </div>
-            <div class="system-status" style="align-items: center; flex-wrap: wrap;">
-                <?php if ($activeTenant !== null && $activeSubscription !== null): ?>
-                    <span class="status-badge status-active" id="headerTenantBadge">
-                        🏢 <?= htmlspecialchars($activeTenant->companyName) ?>
-                        (<?= $activeSubscription->isUnlimited() ? 'Sınırsız OCR' : ($activeSubscription->usedOcrCount . '/' . $activeSubscription->monthlyOcrQuota . ' OCR') ?>)
-                    </span>
-                <?php else: ?>
-                    <a href="#saasPlansSection" class="status-badge status-active" style="text-decoration: none;">
-                        🎁 90 Gün / 50 OCR Ücretsiz Deneme Başlat
-                    </a>
-                <?php endif; ?>
-                <a href="#saasPlansSection" class="btn btn-sm btn-secondary" style="padding: 0.45rem 0.9rem; font-size: 0.82rem;">
-                    🚀 SaaS Paketler & Üyelik
-                </a>
-                <?php if ($dbEnabled): ?>
+            <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                <div class="system-status">
                     <span class="status-badge status-active">
-                        <span class="pulse-dot"></span> MySQL Aktif
+                        <span class="pulse-dot"></span> Sistem Aktif
                     </span>
-                <?php else: ?>
-                    <span class="status-badge status-inactive" title="SaaS abonelik katmanı yerel SQLite üzerinde aktif; geçmiş mutabakat arşivi için config.php'den MySQL açılabilir.">
-                        ⚠️ MySQL Devre Dışı (SaaS SQLite Aktif)
+                </div>
+                <div class="user-auth-bar" style="display: flex; align-items: center; gap: 10px;">
+                    <span class="status-badge" style="background: rgba(49, 130, 206, 0.15); color: #3182ce; border: 1px solid rgba(49, 130, 206, 0.3);">
+                        👤 <?= htmlspecialchars((string)($_SESSION['hbc_user'] ?? '')) ?>
                     </span>
-                <?php endif; ?>
+                    <a href="index.php?action=logout" class="btn btn-sm" style="background: #e53e3e; color: #fff; padding: 6px 14px; border-radius: 6px; text-decoration: none; font-size: 0.85rem; font-weight: 600;">Çıkış Yap</a>
+                </div>
             </div>
         </header>
-
-        <!-- SaaS Subscription & Quota Status Banner -->
-        <section class="card saas-status-banner animate-fade-in" id="saasStatusBar" style="padding: 1.25rem 1.75rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-                <div>
-                    <?php if ($activeTenant !== null && $activeSubscription !== null): ?>
-                        <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
-                            <strong style="font-size: 1.05rem;"><?= htmlspecialchars($activeTenant->companyName) ?></strong>
-                            <span class="badge badge-matched" id="saasBannerPlanCode"><?= htmlspecialchars(strtoupper($activeSubscription->planCode)) ?></span>
-                            <span class="badge <?= $activeSubscription->status === 'pending_payment' ? 'badge-extra' : 'badge-matched' ?>" id="saasBannerStatus">
-                                Durum: <?= htmlspecialchars($activeSubscription->status) ?>
-                            </span>
-                        </div>
-                        <p class="text-muted" style="font-size: 0.88rem; margin-top: 0.35rem;" id="saasBannerQuotaText">
-                            Aylık Koli/İrsaliye OCR Kotası:
-                            <strong><?= $activeSubscription->usedOcrCount ?></strong> /
-                            <strong><?= $activeSubscription->isUnlimited() ? 'Sınırsız' : (string)$activeSubscription->monthlyOcrQuota ?></strong>
-                            <?php if ($activeSubscription->trialEndsAt !== null): ?>
-                                | Deneme Bitiş: <strong><?= htmlspecialchars($activeSubscription->trialEndsAt) ?></strong>
-                            <?php else: ?>
-                                | Dönem Sonu: <strong><?= htmlspecialchars($activeSubscription->endsAt) ?></strong>
-                            <?php endif; ?>
-                        </p>
-                    <?php else: ?>
-                        <strong style="font-size: 1.05rem;">🎁 Lojistik & Perakende Tedarikçilerine Özel: 90 Gün / 50 Adet Koli & İrsaliye OCR Ücretsiz Deneme!</strong>
-                        <p class="text-muted" style="font-size: 0.88rem; margin-top: 0.25rem;">
-                            Hemen ücretsiz firma kaydınızı oluşturun, el terminali (Excel) ve mağaza irsaliye (PDF) mutabakatını saniyeler içinde deneyimleyin.
-                        </p>
-                    <?php endif; ?>
-                </div>
-                <div style="display: flex; gap: 0.6rem; flex-wrap: wrap;">
-                    <a href="#saasRegisterBox" class="btn btn-sm btn-secondary">Firma Kaydı (90 Gün Ücretsiz)</a>
-                    <a href="#saasPlansSection" class="btn btn-sm btn-primary" style="width: auto;">Paket Yükselt</a>
-                </div>
-            </div>
-            <div id="saasQuotaAlertBox" class="mismatch-alert-box" style="display: none; margin-top: 1rem;"></div>
-        </section>
 
         <!-- Main Panel Grid -->
         <main class="main-content">
@@ -609,7 +537,6 @@ $allSaasPlans = SaasPlanCatalog::getAllPlans();
                 </div>
                 
                 <form id="reconcileForm" class="reconcile-form">
-                    <input type="hidden" id="tenant_id" name="tenant_id" value="<?= $activeTenant !== null ? $activeTenant->id : '' ?>">
                     <div class="form-row" style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
                         <div class="form-group" style="flex: 1; margin-bottom: 0;">
                             <label for="company_id">Firma</label>
@@ -618,8 +545,8 @@ $allSaasPlans = SaasPlanCatalog::getAllPlans();
                             </select>
                         </div>
                         <div class="form-group" style="flex: 1; margin-bottom: 0;">
-                            <label for="store_name">Araç Plakası <?= $dbEnabled ? '' : '<span class="optional-text">(İsteğe Bağlı)</span>' ?></label>
-                            <input type="text" id="store_name" name="store_name" placeholder="Örn: 34ABC123" <?= $dbEnabled ? 'required' : '' ?> style="width: 100%;">
+                            <label for="store_name">Araç Plakası <span class="optional-text">(İsteğe Bağlı)</span></label>
+                            <input type="text" id="store_name" name="store_name" placeholder="Örn: 34ABC123" style="width: 100%;">
                         </div>
                     </div>
 
@@ -742,182 +669,11 @@ $allSaasPlans = SaasPlanCatalog::getAllPlans();
                     <div id="noDataMsg" class="no-data-msg" style="display:none;">Eşleşen kayıt bulunamadı.</div>
                 </div>
             </section>
-
-            <!-- Past Reports (If database active) -->
-            <?php if ($dbEnabled): ?>
-                <section class="card past-reports-card animate-slide-up">
-                    <div class="card-header">
-                        <h2>Kayıtlı Geçmiş Mutabakatlar</h2>
-                        <p>Daha önce kaydedilmiş karşılaştırma sonuçlarını inceleyin ve dışa aktarın.</p>
-                    </div>
-                    <div class="table-wrapper">
-                        <?php if (empty($pastReports)): ?>
-                            <div class="empty-state">Henüz kayıtlı rapor bulunmuyor.</div>
-                        <?php else: ?>
-                            <table class="past-reports-table">
-                                <thead>
-                                    <tr>
-                                        <th>Mağaza / Sevkiyat Adı</th>
-                                        <th>Tarih</th>
-                                        <th>Özet</th>
-                                        <th>İşlemler</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($pastReports as $report): ?>
-                                        <tr>
-                                            <td class="font-semibold"><?= htmlspecialchars($report['store_name']) ?></td>
-                                            <td class="text-muted">
-                                                <?php
-                                                $timestamp = strtotime($report['created_at']);
-                                                echo htmlspecialchars($timestamp !== false ? date('d.m.Y H:i', $timestamp) : $report['created_at']);
-                                                ?>
-                                            </td>
-                                            <td>
-                                                <div class="mini-badges">
-                                                    <span class="mini-badge badge-matched" title="Eşleşen"><?= $report['matched_count'] ?> ✅</span>
-                                                    <span class="mini-badge badge-missing" title="Eksik"><?= $report['missing_count'] ?> ❌</span>
-                                                    <span class="mini-badge badge-extra" title="Fazla"><?= $report['extra_count'] ?> ➕</span>
-                                                </div>
-                                            </td>
-                                            <td>
-                                                <div class="row-actions">
-                                                    <button type="button" class="btn btn-sm btn-view-report" data-id="<?= $report['id'] ?>">Raporu Yükle</button>
-                                                    <a href="index.php?action=export-excel-saved&id=<?= $report['id'] ?>" class="btn btn-sm btn-export">Excel İndir</a>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        <?php endif; ?>
-                    </div>
-                </section>
-            <?php endif; ?>
-
-            <!-- 2026 Multi-Tenant SaaS Paket Seçimi, Ücretsiz Kayıt ve Paket Yükseltme Bölümü -->
-            <section class="card saas-plans-card animate-slide-up" id="saasPlansSection" style="margin-top: 2rem;">
-                <div class="card-header">
-                    <h2>2026 B2B Lojistik & Perakende OCR Mutabakat SaaS Paketleri</h2>
-                    <p>90 Gün / 50 OCR Ücretsiz Deneme ile hemen başlayın veya operasyon hacminize uygun pakete yükseltin (KDV Hariç).</p>
-                </div>
-
-                <!-- Pricing Cards Grid -->
-                <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 2rem;">
-                    <?php foreach ($allSaasPlans as $planCode => $plan): ?>
-                        <div class="stat-box <?= $planCode === 'logistics_pro' ? 'stat-matched' : 'stat-extra' ?>" style="display: flex; flex-direction: column; justify-content: space-between; gap: 1rem;">
-                            <div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                                    <span class="badge <?= $planCode === 'logistics_pro' ? 'badge-matched' : 'badge-extra' ?>"><?= htmlspecialchars($plan['badge']) ?></span>
-                                    <code style="font-size: 0.75rem; opacity: 0.75;"><?= htmlspecialchars($planCode) ?></code>
-                                </div>
-                                <div class="stat-label" style="font-size: 1.15rem; color: var(--text-primary);"><?= htmlspecialchars($plan['name']) ?></div>
-                                <?php if ($plan['is_trial']): ?>
-                                    <div class="stat-value" style="font-size: 1.7rem; margin: 0.5rem 0;">Ücretsiz <span style="font-size: 0.9rem; font-weight: 500;">(90 Gün / 50 OCR)</span></div>
-                                <?php else: ?>
-                                    <div class="stat-value" style="font-size: 1.65rem; margin: 0.5rem 0;">
-                                        <?= number_format($plan['monthly_price_try'], 0, ',', '.') ?> ₺<span style="font-size: 0.85rem; font-weight: 500;">/ay</span>
-                                    </div>
-                                    <div style="font-size: 0.85rem; font-weight: 600; color: var(--primary); margin-bottom: 0.5rem;">
-                                        Yıllık Peşin: <?= number_format($plan['yearly_price_try'], 0, ',', '.') ?> ₺ / Yıl
-                                    </div>
-                                <?php endif; ?>
-                                <p class="stat-desc" style="margin-bottom: 0.75rem; line-height: 1.4;"><?= htmlspecialchars($plan['description']) ?></p>
-                                <ul style="padding-left: 1.1rem; font-size: 0.82rem; color: var(--text-secondary); line-height: 1.55;">
-                                    <?php foreach ($plan['features'] as $feat): ?>
-                                        <li><?= htmlspecialchars($feat) ?></li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            </div>
-                            <div>
-                                <?php if ($plan['is_trial']): ?>
-                                    <a href="#saasRegisterBox" class="btn btn-sm btn-secondary" style="width: 100%;">Ücretsiz Deneme Başlat</a>
-                                <?php else: ?>
-                                    <button type="button" class="btn btn-sm btn-primary btn-select-saas-plan" data-plan="<?= htmlspecialchars($planCode) ?>" style="width: 100%;">
-                                        Bu Pakete Yükselt
-                                    </button>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-
-                <!-- Self-Service Registration & Plan Upgrade Forms -->
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
-                    <!-- Self-Service Tenant Registration (90-Day / 50 OCR Trial) -->
-                    <div class="stat-box" id="saasRegisterBox" style="background: rgba(255,255,255,0.6); border: 1px solid var(--border-color);">
-                        <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">🏢 Yeni Tedarikçi / Lojistik Firması Kaydı</h3>
-                        <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">
-                            Anında <strong>90 Gün ve 50 Adet Koli/İrsaliye OCR</strong> okuma kotalı ücretsiz deneme aboneliğinizi başlatır.
-                        </p>
-                        <form id="saasRegisterForm">
-                            <div class="form-group" style="margin-bottom: 0.85rem;">
-                                <label for="reg_company_name">Firma Ünvanı</label>
-                                <input type="text" id="reg_company_name" name="company_name" placeholder="Örn: Pozitif Lojistik ve Tekstil A.Ş." required>
-                            </div>
-                            <div class="form-group" style="margin-bottom: 0.85rem;">
-                                <label for="reg_tax_number">Vergi Numarası (Opsiyonel)</label>
-                                <input type="text" id="reg_tax_number" name="tax_number" placeholder="Örn: 1234567890">
-                            </div>
-                            <div class="form-group" style="margin-bottom: 0.85rem;">
-                                <label for="reg_contact_name">Yetkili Ad Soyad</label>
-                                <input type="text" id="reg_contact_name" name="contact_name" placeholder="Örn: Ahmet Yılmaz" required>
-                            </div>
-                            <div class="form-group" style="margin-bottom: 0.85rem;">
-                                <label for="reg_contact_email">Kurumsal E-Posta</label>
-                                <input type="text" id="reg_contact_email" name="contact_email" placeholder="ornek@firmaniz.com.tr" required>
-                            </div>
-                            <div class="form-group" style="margin-bottom: 1rem;">
-                                <label for="reg_contact_phone">Telefon (Opsiyonel)</label>
-                                <input type="text" id="reg_contact_phone" name="contact_phone" placeholder="05XX XXX XX XX">
-                            </div>
-                            <button type="submit" class="btn btn-primary" id="saasRegisterSubmitBtn">
-                                🎁 90 Gün / 50 OCR Ücretsiz Denemeyi Başlat
-                            </button>
-                            <div id="saasRegisterResult" style="display: none; margin-top: 0.75rem; font-size: 0.88rem;"></div>
-                        </form>
-                    </div>
-
-                    <!-- Plan Upgrade Request (pending_payment) -->
-                    <div class="stat-box" id="saasUpgradeBox" style="background: rgba(255,255,255,0.6); border: 1px solid var(--border-color);">
-                        <h3 style="font-size: 1.1rem; margin-bottom: 0.5rem;">🚀 Paket Yükseltme Talebi (Havale/EFT & Kurumsal Lisans)</h3>
-                        <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">
-                            Seçtiğiniz paket <code>pending_payment</code> durumunda açılır; ödeme/havale onayıyla kotanız anında sıfırlanıp yükseltilir.
-                        </p>
-                        <form id="saasUpgradeForm">
-                            <input type="hidden" id="upg_tenant_id" name="tenant_id" value="<?= $activeTenant !== null ? $activeTenant->id : '' ?>">
-                            <div class="form-group" style="margin-bottom: 0.85rem;">
-                                <label for="upg_plan_code">Yükseltilecek Paket</label>
-                                <select id="upg_plan_code" name="plan_code" style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); background: #fff;">
-                                    <option value="logistics_pro" selected>Lojistik & Perakende Pro (2.500 OCR/Ay — 4.990 ₺/Ay | 39.900 ₺/Yıl)</option>
-                                    <option value="supplier_starter">Tedarikçi Başlangıç (500 OCR/Ay — 2.490 ₺/Ay | 24.900 ₺/Yıl)</option>
-                                    <option value="enterprise_unlimited">Kurumsal Sınırsız / Özel ERP (Sınırsız OCR — 9.900 ₺/Ay | 89.900 ₺/Yıl)</option>
-                                </select>
-                            </div>
-                            <div class="form-group" style="margin-bottom: 0.85rem;">
-                                <label for="upg_billing_cycle">Faturalama Dönemi</label>
-                                <select id="upg_billing_cycle" name="billing_cycle" style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border-color); background: #fff;">
-                                    <option value="yearly" selected>Yıllık Peşin Lisans (%20-%33 Avantajlı + Ücretsiz Kurulum)</option>
-                                    <option value="monthly">Aylık Abonelik</option>
-                                </select>
-                            </div>
-                            <div class="form-group" style="margin-bottom: 1rem;">
-                                <label for="upg_payment_reference">Ödeme / Havale Dekont Referansı (Opsiyonel)</label>
-                                <input type="text" id="upg_payment_reference" name="payment_reference" placeholder="Örn: EFT-20261015-LOJISTIKPRO">
-                            </div>
-                            <button type="submit" class="btn btn-primary" id="saasUpgradeSubmitBtn">
-                                💳 Paket Yükseltme Talebi Oluştur (pending_payment)
-                            </button>
-                            <div id="saasUpgradeResult" style="display: none; margin-top: 0.75rem; font-size: 0.88rem;"></div>
-                        </form>
-                    </div>
-                </div>
-            </section>
         </main>
 
         <!-- Footer -->
         <footer class="app-footer" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-            <p>&copy; <?= date('Y') ?> HBC Mutabakat SaaS — Global Pozitif Teknolojiler.</p>
+            <p>&copy; <?= date('Y') ?> HBC Mutabakat.</p>
             <p style="font-size: 0.8rem; color: var(--text-muted);">Aktif Sunucu IP: <strong><?= $_SERVER['SERVER_ADDR'] ?? 'Bilinmiyor' ?></strong></p>
         </footer>
     </div>
