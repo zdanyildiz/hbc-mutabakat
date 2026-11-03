@@ -410,8 +410,19 @@ class PdfExtractor
         $stderrData = '';
         $timedOut = false;
         $startTime = microtime(true);
+        $lastHeartbeat = $startTime;
+        $isWebRequest = (PHP_SAPI !== 'cli');
 
         while (true) {
+            if ($isWebRequest && (microtime(true) - $lastHeartbeat) >= 2.0) {
+                echo " ";
+                if (function_exists('ob_flush') && ob_get_level() > 0) {
+                    @ob_flush();
+                }
+                flush();
+                $lastHeartbeat = microtime(true);
+            }
+
             $read = [$pipes[1], $pipes[2]];
             $write = null;
             $except = null;

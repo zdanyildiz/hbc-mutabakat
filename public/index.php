@@ -2,6 +2,94 @@
 
 declare(strict_types=1);
 
+// Background CLI Worker Entrypoint (Detached from PHP-FPM reloads)
+if (PHP_SAPI === 'cli' && isset($argv) && is_array($argv)) {
+    foreach ($argv as $arg) {
+        if (str_starts_with($arg, '--run-job=')) {
+            $cliJobId = substr($arg, strlen('--run-job='));
+            if (!preg_match('/^[a-f0-9]{24}$/', $cliJobId)) {
+                exit(1);
+            }
+            require_once dirname(__DIR__) . '/vendor/autoload.php';
+            @set_time_limit(1800);
+            $jobDir = dirname(__DIR__) . '/var/tmp/job_' . $cliJobId;
+            $jobFile = $jobDir . '/job.json';
+            if (!is_file($jobFile)) {
+                exit(1);
+            }
+            $jobMeta = json_decode((string)file_get_contents($jobFile), true);
+            if (!is_array($jobMeta)) {
+                exit(1);
+            }
+            $startTime = (float)($jobMeta['start_time'] ?? microtime(true));
+            $storeName = (string)($jobMeta['store_name'] ?? 'Eşleşme Sonucu');
+            $companyId = (string)($jobMeta['company_id'] ?? '1');
+            $excelPath = (string)($jobMeta['excel_path'] ?? '');
+            $pdfPaths = (array)($jobMeta['pdf_paths'] ?? []);
+            $pdfOriginalFilenames = (array)($jobMeta['pdf_original_filenames'] ?? []);
+
+            try {
+                $excelExtractor = new \App\ExcelExtractor();
+                $pdfExtractor = new \App\PdfExtractor();
+                $pdfExtractor->setUseOcr(true);
+                $reconciler = new \App\Reconciler($excelExtractor, $pdfExtractor);
+
+                $result = $reconciler->reconcile($excelPath, $pdfPaths, $companyId);
+
+                $excelMap = $excelExtractor->extractMap($excelPath);
+                $barcodeStores = $excelMap;
+                foreach ($pdfPaths as $path) {
+                    $pdfMap = $pdfExtractor->extractBarcodeStoreMap($path, $pdfOriginalFilenames[$path] ?? null);
+                    foreach ($pdfMap as $barcode => $pdfStoreName) {
+                        if (!isset($barcodeStores[$barcode])) {
+                            $barcodeStores[$barcode] = $pdfStoreName;
+                        }
+                    }
+                }
+
+                $elapsed = round(microtime(true) - $startTime, 4);
+                \App\Logger::log("MUTABAKAT BAŞARIYLA TAMAMLANDI - Toplam Süre: {$elapsed} saniye");
+                \App\Logger::log("Excel Barkod: " . count($result->terminalBarcodes) . " | PDF Barkod: " . count($result->storeBarcodes));
+                \App\Logger::log("Eşleşen: " . count($result->matched) . " | Eksik: " . count($result->missingInStore) . " | Fazla: " . count($result->extraInStore) . " | Şüpheli: " . count($result->suspectedMatches));
+
+                $payload = [
+                    'success' => true,
+                    'status' => 'completed',
+                    'store_name' => $storeName,
+                    'saved_id' => null,
+                    'result' => $result->toArray(),
+                    'barcode_stores' => $barcodeStores,
+                    'pdf_original_words' => $pdfExtractor->getBarcodeToOriginalMap(),
+                    'pdf_mismatches' => $pdfExtractor->getMismatches(),
+                    'elapsed_time' => $elapsed,
+                ];
+            } catch (\Throwable $e) {
+                \App\Logger::log("HATA OLUŞTU: [" . get_class($e) . "] " . $e->getMessage() . " | Yer: " . $e->getFile() . ":" . $e->getLine());
+                $payload = [
+                    'success' => false,
+                    'status' => 'failed',
+                    'message' => $e->getMessage(),
+                ];
+            } finally {
+                if ($excelPath !== '' && is_file($excelPath)) {
+                    @unlink($excelPath);
+                }
+                foreach ($pdfPaths as $p) {
+                    if (is_string($p) && $p !== '' && is_file($p)) {
+                        @unlink($p);
+                    }
+                }
+            }
+
+            $tmpResultFile = $jobDir . '/result.json.tmp';
+            $finalResultFile = $jobDir . '/result.json';
+            file_put_contents($tmpResultFile, json_encode($payload, JSON_UNESCAPED_UNICODE));
+            @rename($tmpResultFile, $finalResultFile);
+            exit(0);
+        }
+    }
+}
+
 // Load .env configuration
 $envFile = dirname(__DIR__) . '/.env';
 $envVars = [];
@@ -321,12 +409,70 @@ if (!is_dir($config['upload_dir'])) {
 
 $action = $_GET['action'] ?? '';
 
+// Handle Job Status Polling for Async Reconciliation
+if ($action === 'job_status') {
+    session_write_close();
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
+    $jobId = trim((string)($_GET['job_id'] ?? $_POST['job_id'] ?? ''));
+    if (!preg_match('/^[a-f0-9]{24}$/', $jobId)) {
+        echo json_encode(['success' => false, 'status' => 'failed', 'message' => 'Geçersiz işlem kimliği.']);
+        exit;
+    }
+
+    $jobDir = dirname(__DIR__) . '/var/tmp/job_' . $jobId;
+    $resultFile = $jobDir . '/result.json';
+    $jobFile = $jobDir . '/job.json';
+
+    if (is_file($resultFile)) {
+        $raw = (string)file_get_contents($resultFile);
+        @unlink($resultFile);
+        @unlink($jobFile);
+        @unlink($jobDir . '/worker.log');
+        @unlink($jobDir . '/worker.pid');
+        @rmdir($jobDir);
+        echo $raw;
+        exit;
+    }
+
+    if (!is_file($jobFile)) {
+        echo json_encode(['success' => false, 'status' => 'failed', 'message' => 'İşlem kaydı bulunamadı veya süresi doldu.']);
+        exit;
+    }
+
+    // Check if background worker exited unexpectedly without writing result.json
+    $pidFile = $jobDir . '/worker.pid';
+    if (is_file($pidFile)) {
+        $pid = (int)trim((string)file_get_contents($pidFile));
+        if ($pid > 0 && is_dir('/proc') && !is_dir('/proc/' . $pid)) {
+            usleep(200000); // Wait 200ms in case result.json was just being renamed
+            if (is_file($resultFile)) {
+                $raw = (string)file_get_contents($resultFile);
+                @unlink($resultFile);
+                @unlink($jobFile);
+                @unlink($jobDir . '/worker.log');
+                @unlink($pidFile);
+                @rmdir($jobDir);
+                echo $raw;
+                exit;
+            }
+            echo json_encode(['success' => false, 'status' => 'failed', 'message' => 'Arka plan OCR işlemi beklenmedik şekilde sonlandı.']);
+            exit;
+        }
+    }
+
+    echo json_encode(['success' => true, 'status' => 'running']);
+    exit;
+}
+
 // Handle Reconcile Request via AJAX
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
     session_write_close();
+    ignore_user_abort(true);
     header('Content-Type: application/json; charset=utf-8');
     header('X-Accel-Buffering: no'); // Nginx'in veriyi buffer'lamasını engeller, anında gönderir
-    @set_time_limit(600); // 10 dakika limit
+    @set_time_limit(1800); // 30 dakika limit
     
     // PHP'nin çıktı önbelleğini kapatıp veriyi anlık göndermesini sağlıyoruz
     while (ob_get_level() > 0) {
@@ -391,6 +537,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
 
         $excelPath = $excelFile['tmp_name'];
 
+        $storeName = trim((string)($_POST['store_name'] ?? ''));
+        if ($storeName === '') {
+            $storeName = 'Eşleşme Sonucu';
+        }
+
+        $companyId = trim((string)($_POST['company_id'] ?? '1'));
+
+        // Async Background Worker Mode (Prevents 502 Bad Gateway on PHP-FPM reloads / long OCR runs)
+        $isAsyncRequested = !empty($_GET['async']) || !empty($_POST['async']);
+        if ($isAsyncRequested && PHP_OS_FAMILY !== 'Windows') {
+            $jobId = bin2hex(random_bytes(12));
+            $jobDir = dirname(__DIR__) . '/var/tmp/job_' . $jobId;
+            if (@mkdir($jobDir, 0750, true)) {
+                $excelExt = strtolower(pathinfo((string)($excelFile['name'] ?? 'file.xlsx'), PATHINFO_EXTENSION)) ?: 'xlsx';
+                $savedExcelPath = $jobDir . '/input_excel.' . $excelExt;
+                $savedPdfPaths = [];
+                $savedPdfOrigNames = [];
+                $copyOk = @copy($excelPath, $savedExcelPath);
+                foreach ($pdfPaths as $idx => $tmpPdfPath) {
+                    $destPdf = $jobDir . '/input_pdf_' . $idx . '.pdf';
+                    if (!@copy($tmpPdfPath, $destPdf)) {
+                        $copyOk = false;
+                        break;
+                    }
+                    $savedPdfPaths[] = $destPdf;
+                    $savedPdfOrigNames[$destPdf] = $pdfOriginalFilenames[$tmpPdfPath] ?? ('document_' . $idx . '.pdf');
+                }
+
+                if ($copyOk) {
+                    $jobMeta = [
+                        'job_id' => $jobId,
+                        'start_time' => $startTime,
+                        'store_name' => $storeName,
+                        'company_id' => $companyId,
+                        'excel_path' => $savedExcelPath,
+                        'pdf_paths' => $savedPdfPaths,
+                        'pdf_original_filenames' => $savedPdfOrigNames,
+                    ];
+                    file_put_contents($jobDir . '/job.json', json_encode($jobMeta, JSON_UNESCAPED_UNICODE));
+
+                    $phpCli = '/opt/plesk/php/8.3/bin/php';
+                    if (!is_executable($phpCli)) {
+                        $phpCli = (defined('PHP_BINARY') && PHP_BINARY && !str_contains(PHP_BINARY, 'fpm')) ? PHP_BINARY : 'php';
+                    }
+
+                    $cmd = 'nohup ' . escapeshellarg($phpCli) . ' ' . escapeshellarg(__FILE__) . ' --run-job=' . escapeshellarg($jobId)
+                        . ' > ' . escapeshellarg($jobDir . '/worker.log') . ' 2>&1 & echo $!';
+                    $pidOut = trim((string)@shell_exec($cmd));
+                    if (ctype_digit($pidOut) && (int)$pidOut > 0) {
+                        file_put_contents($jobDir . '/worker.pid', $pidOut);
+                        echo json_encode([
+                            'success' => true,
+                            'async' => true,
+                            'job_id' => $jobId,
+                        ]);
+                        exit;
+                    }
+                }
+            }
+        }
+
+        // Send initial whitespace immediately so Nginx receives HTTP 200 headers right away
+        echo " ";
+        if (function_exists('ob_flush') && ob_get_level() > 0) {
+            @ob_flush();
+        }
+        flush();
+
         $excelExtractor = new ExcelExtractor();
         $pdfExtractor = new PdfExtractor();
         
@@ -398,13 +612,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         $pdfExtractor->setUseOcr(true);
 
         $reconciler = new Reconciler($excelExtractor, $pdfExtractor);
-
-        $storeName = trim((string)($_POST['store_name'] ?? ''));
-        if ($storeName === '') {
-            $storeName = 'Eşleşme Sonucu';
-        }
-
-        $companyId = trim((string)($_POST['company_id'] ?? '1'));
 
         $result = $reconciler->reconcile($excelPath, $pdfPaths, $companyId);
 

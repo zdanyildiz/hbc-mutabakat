@@ -165,55 +165,111 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const formData = new FormData(form);
 
-        fetch('index.php?action=reconcile', {
-            method: 'POST',
-            body: formData
-        })
-        .then(response => response.text())
-        .then(text => {
-            const cleanedText = text.trim();
-            const data = JSON.parse(cleanedText);
-            if (data.success) {
-                // Save data locally for rendering and exporting
-                currentData.storeName = data.store_name;
-                currentData.matched = data.result.matched;
-                currentData.missingInStore = data.result.missingInStore;
-                currentData.extraInStore = data.result.extraInStore;
-                currentData.invalidBarcodes = data.result.invalidBarcodes || [];
-                currentData.barcodeStores = data.barcode_stores || {};
-                currentData.pdfOriginalWords = data.pdf_original_words || {};
-                currentData.pdfMismatches = data.pdf_mismatches || [];
-                currentData.suspectedMatches = data.result.suspectedMatches || [];
-                currentData.terminalBarcodes = data.result.terminalBarcodes || [];
-                currentData.storeBarcodes = data.result.storeBarcodes || [];
-                currentData.elapsedTime = data.elapsed_time || null;
-                currentData.matchedOcrCount = data.result.matchedOcrCount || 0;
-                currentData.matchedTextCount = data.result.matchedTextCount || 0;
-
-                renderResults();
-                resultsSection.scrollIntoView({ behavior: 'smooth' });
-            } else {
-                alert('Hata: ' + data.message);
-            }
-        })
-        .catch(err => {
-            console.error(err);
-            alert('İşlem sırasında beklenmedik bir hata oluştu.');
-        })
-        .finally(() => {
-            // Stop live timer
+        const finishUI = () => {
             if (timerInterval) {
                 clearInterval(timerInterval);
                 timerInterval = null;
             }
-            // Hide loading state
             submitBtn.disabled = false;
             btnText.style.display = 'block';
             loader.style.display = 'none';
             if (liveTimer) {
                 liveTimer.style.display = 'none';
             }
-        });
+        };
+
+        const applyResultData = (data) => {
+            currentData.storeName = data.store_name;
+            currentData.matched = data.result.matched;
+            currentData.missingInStore = data.result.missingInStore;
+            currentData.extraInStore = data.result.extraInStore;
+            currentData.invalidBarcodes = data.result.invalidBarcodes || [];
+            currentData.barcodeStores = data.barcode_stores || {};
+            currentData.pdfOriginalWords = data.pdf_original_words || {};
+            currentData.pdfMismatches = data.pdf_mismatches || [];
+            currentData.suspectedMatches = data.result.suspectedMatches || [];
+            currentData.terminalBarcodes = data.result.terminalBarcodes || [];
+            currentData.storeBarcodes = data.result.storeBarcodes || [];
+            currentData.elapsedTime = data.elapsed_time || null;
+            currentData.matchedOcrCount = data.result.matchedOcrCount || 0;
+            currentData.matchedTextCount = data.result.matchedTextCount || 0;
+
+            renderResults();
+            resultsSection.scrollIntoView({ behavior: 'smooth' });
+        };
+
+        const pollJobStatus = (jobId, consecutiveErrors = 0) => {
+            fetch(`index.php?action=job_status&job_id=${encodeURIComponent(jobId)}`, {
+                method: 'GET',
+                cache: 'no-store'
+            })
+            .then(res => {
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+                return res.text();
+            })
+            .then(text => {
+                const data = JSON.parse(text.trim());
+                if (data.status === 'running') {
+                    setTimeout(() => pollJobStatus(jobId, 0), 1500);
+                    return;
+                }
+                finishUI();
+                if (data.success && data.result) {
+                    applyResultData(data);
+                } else {
+                    alert('Hata: ' + (data.message || 'Mutabakat işlemi tamamlanamadı.'));
+                }
+            })
+            .catch(err => {
+                if (consecutiveErrors < 15) {
+                    setTimeout(() => pollJobStatus(jobId, consecutiveErrors + 1), 1500);
+                } else {
+                    console.error(err);
+                    finishUI();
+                    alert('İşlem sırasında sunucu bağlantısı kesildi. Lütfen tekrar deneyin.');
+                }
+            });
+        };
+
+        const submitRequest = (retryCount = 0) => {
+            fetch('index.php?action=reconcile&async=1', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok && response.status >= 500 && retryCount < 2) {
+                    throw new Error(`RETRY_${response.status}`);
+                }
+                return response.text();
+            })
+            .then(text => {
+                const cleanedText = text.trim();
+                const data = JSON.parse(cleanedText);
+                if (data.success && data.async && data.job_id) {
+                    setTimeout(() => pollJobStatus(data.job_id, 0), 1000);
+                    return;
+                }
+                finishUI();
+                if (data.success && data.result) {
+                    applyResultData(data);
+                } else {
+                    alert('Hata: ' + (data.message || 'Bilinmeyen bir hata oluştu.'));
+                }
+            })
+            .catch(err => {
+                if (retryCount < 2 && String(err.message || '').startsWith('RETRY_')) {
+                    setTimeout(() => submitRequest(retryCount + 1), 1500);
+                    return;
+                }
+                console.error(err);
+                finishUI();
+                alert('İşlem sırasında beklenmedik bir hata oluştu.');
+            });
+        };
+
+        submitRequest(0);
     });
 
     function renderResults() {

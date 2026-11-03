@@ -47,8 +47,8 @@ def ocr_page(img_path: str) -> str:
         
         # ImageMagick pre-processing to binarize and clean the image
         img_dir = os.path.dirname(img_path)
-        img_name = os.path.basename(img_path)
-        clean_img_path = os.path.join(img_dir, "clean_" + img_name)
+        img_name = os.path.splitext(os.path.basename(img_path))[0]
+        clean_img_path = os.path.join(img_dir, f"clean_{img_name}.pgm")
         
         try:
             # Grayscale, enhance contrast and sharpen (better for Tesseract LSTM than harsh binarization)
@@ -100,25 +100,33 @@ def extract_text_mode(pdf_path: str) -> str:
     return result.stdout
 
 def extract_ocr_mode(pdf_path: str) -> str:
+    try:
+        os.nice(10)
+    except Exception:
+        pass
+
+    lower_path = pdf_path.lower()
+    if lower_path.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".pgm")):
+        return ocr_page(pdf_path)
+
     temp_dir = tempfile.mkdtemp()
     try:
         subprocess.run([
-            "pdftoppm", "-png", "-r", "300",
+            "pdftoppm", "-gray", "-r", "300",
             pdf_path, os.path.join(temp_dir, "page")
         ], check=True, timeout=180)
 
         page_images = sorted([
             os.path.join(temp_dir, f)
             for f in os.listdir(temp_dir)
-            if f.startswith("page-") and f.endswith(".png")
+            if f.startswith("page-") and f.endswith((".pgm", ".png", ".jpg", ".jpeg"))
         ])
 
         if not page_images:
             raise RuntimeError("No pages extracted from PDF.")
 
         full_text_parts = [None] * len(page_images)
-        cpu_count = os.cpu_count() or 4
-        max_workers = min(max(4, min(16, cpu_count)), len(page_images))
+        max_workers = min(4, len(page_images))
 
         sys.stderr.write(f"OCR_PROGRESS: Toplam {len(page_images)} sayfa görsele dönüştürüldü. OCR işlemi başlıyor...\n")
         sys.stderr.flush()
