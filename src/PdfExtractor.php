@@ -129,7 +129,7 @@ class PdfExtractor
                 $smalotElapsed = round(microtime(true) - $smalotStart, 4);
                 \App\Logger::log("[PdfExtractor-Text] Smalot PDF Parser kullanıldı - Süre: {$smalotElapsed} saniye");
             } catch (\Exception $e) {
-                \App\Logger::log("[PdfExtractor-Text] Smalot HATA: " . $e->getMessage());
+                \App\Logger::error("[PdfExtractor-Text] Smalot HATA: " . $e->getMessage());
                 throw new \RuntimeException("PDF dosyası ayrıştırılamadı: " . $e->getMessage());
             }
         }
@@ -358,12 +358,12 @@ class PdfExtractor
 
         $result = $this->runProcessWithTimeout($cmd, 'PdfExtractor-Python-Live');
         if ($result === null) {
-            \App\Logger::log("[PdfExtractor-Python] HATA: Süreç başlatılamadı.");
+            \App\Logger::error("[PdfExtractor-Python] HATA: Süreç başlatılamadı.");
             return null;
         }
 
         if ($result['timed_out']) {
-            \App\Logger::log("[PdfExtractor-Python] HATA: İşlem " . self::PYTHON_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
+            \App\Logger::error("[PdfExtractor-Python] HATA: İşlem " . self::PYTHON_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
             return null;
         }
 
@@ -378,7 +378,7 @@ class PdfExtractor
             return $data['lines'] ?? [];
         }
 
-        \App\Logger::log("[PdfExtractor-Python] Hata veya uyumsuz çıktı: " . trim(substr($result['stdout'], 0, 200)));
+        \App\Logger::error("[PdfExtractor-Python] Hata veya uyumsuz çıktı: " . trim(substr($result['stdout'], 0, 200)));
         return null;
     }
 
@@ -558,7 +558,7 @@ class PdfExtractor
                 \App\Logger::log("[PdfExtractor-OCR] Sayfa {$i} görsele çevrildi - Süre: {$pageElapsed} saniye");
             }
         } catch (\Exception $e) {
-            \App\Logger::log("[PdfExtractor-OCR] Imagick HATA: " . $e->getMessage());
+            \App\Logger::error("[PdfExtractor-OCR] Imagick HATA: " . $e->getMessage());
             foreach ($images as $img) {
                 if (file_exists($img)) {
                     unlink($img);
@@ -671,7 +671,7 @@ class PdfExtractor
                     return $raw;
                 }
             } elseif ($result !== null && $result['timed_out']) {
-                \App\Logger::log("[PdfExtractor-Python-Raw] HATA: İşlem " . self::PYTHON_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
+                \App\Logger::error("[PdfExtractor-Python-Raw] HATA: İşlem " . self::PYTHON_TIMEOUT_SECONDS . " saniye içinde tamamlanmadı, sonlandırıldı.");
             }
         }
 

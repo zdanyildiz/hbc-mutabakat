@@ -136,21 +136,40 @@ document.addEventListener('DOMContentLoaded', () => {
     let allRows = []; // Tablodaki tüm satırların listesi (Excel indirme ve sıralama için kullanılacak)
 
     const liveTimer = document.getElementById('liveTimer');
+    const ACTIVE_JOB_STORAGE_KEY = 'hbc_active_job';
     let timerInterval = null;
     let secondsElapsed = 0;
 
-    form.addEventListener('submit', (e) => {
-        e.preventDefault();
+    const reportClientError = (type, message, details = {}) => {
+        try {
+            fetch('index.php?action=client_error', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({
+                    type,
+                    message: String(message || '').slice(0, 300),
+                    job_id: details.jobId || '',
+                    http_status: details.httpStatus || 0,
+                    elapsed_sec: Math.round(secondsElapsed)
+                }),
+                keepalive: true
+            }).catch(() => {});
+        } catch (e) {
+            // Telemetri hatası akışı bozmamalı
+        }
+    };
 
-        // Show loading state
+    const startLoadingUI = (initialSeconds = 0) => {
         submitBtn.disabled = true;
         btnText.style.display = 'none';
         loader.style.display = 'block';
 
-        // Reset and start live timer
-        secondsElapsed = 0;
+        secondsElapsed = Math.max(0, Number(initialSeconds) || 0);
         if (liveTimer) {
-            liveTimer.textContent = '0.0 sn';
+            liveTimer.textContent = `${secondsElapsed.toFixed(1)} sn`;
             liveTimer.style.display = 'inline-block';
         }
         if (timerInterval) {
@@ -158,103 +177,208 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         timerInterval = setInterval(() => {
             secondsElapsed += 0.1;
-            if (liveTimer) {
+            if (liveTimer && !liveTimer.dataset.progressText) {
                 liveTimer.textContent = `${secondsElapsed.toFixed(1)} sn`;
+            } else if (liveTimer && liveTimer.dataset.progressText) {
+                liveTimer.textContent = `${secondsElapsed.toFixed(1)} sn • ${liveTimer.dataset.progressText}`;
             }
         }, 100);
+    };
+
+    const finishUI = () => {
+        if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+        }
+        submitBtn.disabled = false;
+        btnText.style.display = 'block';
+        loader.style.display = 'none';
+        if (liveTimer) {
+            delete liveTimer.dataset.progressText;
+            liveTimer.style.display = 'none';
+        }
+    };
+
+    const applyResultData = (data) => {
+        currentData.storeName = data.store_name;
+        currentData.matched = data.result.matched;
+        currentData.missingInStore = data.result.missingInStore;
+        currentData.extraInStore = data.result.extraInStore;
+        currentData.invalidBarcodes = data.result.invalidBarcodes || [];
+        currentData.barcodeStores = data.barcode_stores || {};
+        currentData.pdfOriginalWords = data.pdf_original_words || {};
+        currentData.pdfMismatches = data.pdf_mismatches || [];
+        currentData.suspectedMatches = data.result.suspectedMatches || [];
+        currentData.terminalBarcodes = data.result.terminalBarcodes || [];
+        currentData.storeBarcodes = data.result.storeBarcodes || [];
+        currentData.elapsedTime = data.elapsed_time || null;
+        currentData.matchedOcrCount = data.result.matchedOcrCount || 0;
+        currentData.matchedTextCount = data.result.matchedTextCount || 0;
+
+        renderResults();
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    const pollJobStatus = (jobId, consecutiveErrors = 0) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+        fetch(`index.php?action=job_status&job_id=${encodeURIComponent(jobId)}`, {
+            method: 'GET',
+            cache: 'no-store',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            signal: controller.signal
+        })
+        .then(async res => {
+            clearTimeout(timeoutId);
+            if (res.status === 401) {
+                sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+                reportClientError('poll_auth_expired', 'HTTP 401', { jobId, httpStatus: 401 });
+                finishUI();
+                alert('Oturum süresi doldu. Lütfen sayfayı yenileyip tekrar giriş yapın.');
+                return { handled: true };
+            }
+            if (!res.ok) {
+                const err = new Error(`HTTP ${res.status}`);
+                err.httpStatus = res.status;
+                throw err;
+            }
+            const text = await res.text();
+            return { handled: false, text };
+        })
+        .then(resObj => {
+            if (!resObj || resObj.handled) {
+                return;
+            }
+            const trimmed = (resObj.text || '').trim();
+            if (trimmed.startsWith('<')) {
+                sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+                reportClientError('poll_html_response', 'HTML login or error page returned', { jobId });
+                finishUI();
+                alert('Oturum süresi doldu veya sunucu beklenmeyen bir sayfa döndürdü. Lütfen sayfayı yenileyip tekrar giriş yapın.');
+                return;
+            }
+
+            const data = JSON.parse(trimmed);
+
+            if (data.status === 'auth_expired' || data.auth_expired) {
+                sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+                reportClientError('poll_auth_expired', data.message || 'auth_expired', { jobId, httpStatus: 401 });
+                finishUI();
+                alert(data.message || 'Oturum süresi doldu. Lütfen sayfayı yenileyip tekrar giriş yapın.');
+                return;
+            }
+
+            if (data.status === 'running') {
+                if (liveTimer && data.progress && data.progress.total_pdfs) {
+                    liveTimer.dataset.progressText = `${data.progress.total_pdfs} PDF işleniyor`;
+                }
+                setTimeout(() => pollJobStatus(jobId, 0), 1500);
+                return;
+            }
+
+            sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+            finishUI();
+
+            if (data.success && data.result) {
+                try {
+                    applyResultData(data);
+                } catch (renderErr) {
+                    console.error(renderErr);
+                    reportClientError('render_error', renderErr?.message || String(renderErr), { jobId });
+                    alert('Sonuçlar görüntülenirken tarayıcı hatası oluştu.');
+                }
+            } else {
+                reportClientError('job_failed', data.message || 'Mutabakat işlemi tamamlanamadı.', { jobId });
+                alert('Hata: ' + (data.message || 'Mutabakat işlemi tamamlanamadı.'));
+            }
+        })
+        .catch(err => {
+            clearTimeout(timeoutId);
+            if (consecutiveErrors < 60) {
+                const backoffMs = Math.min(4000, 1500 + consecutiveErrors * 250);
+                setTimeout(() => pollJobStatus(jobId, consecutiveErrors + 1), backoffMs);
+            } else {
+                console.error(err);
+                sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+                finishUI();
+                reportClientError('poll_connection_lost', err?.message || String(err), { jobId, httpStatus: err?.httpStatus || 0 });
+                alert('Sunucu bağlantısı uzun süre kesildiği için sonuç alınamadı. Lütfen sayfayı yenileyip tekrar deneyin.');
+            }
+        });
+    };
+
+    form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        startLoadingUI(0);
 
         const formData = new FormData(form);
-
-        const finishUI = () => {
-            if (timerInterval) {
-                clearInterval(timerInterval);
-                timerInterval = null;
-            }
-            submitBtn.disabled = false;
-            btnText.style.display = 'block';
-            loader.style.display = 'none';
-            if (liveTimer) {
-                liveTimer.style.display = 'none';
-            }
-        };
-
-        const applyResultData = (data) => {
-            currentData.storeName = data.store_name;
-            currentData.matched = data.result.matched;
-            currentData.missingInStore = data.result.missingInStore;
-            currentData.extraInStore = data.result.extraInStore;
-            currentData.invalidBarcodes = data.result.invalidBarcodes || [];
-            currentData.barcodeStores = data.barcode_stores || {};
-            currentData.pdfOriginalWords = data.pdf_original_words || {};
-            currentData.pdfMismatches = data.pdf_mismatches || [];
-            currentData.suspectedMatches = data.result.suspectedMatches || [];
-            currentData.terminalBarcodes = data.result.terminalBarcodes || [];
-            currentData.storeBarcodes = data.result.storeBarcodes || [];
-            currentData.elapsedTime = data.elapsed_time || null;
-            currentData.matchedOcrCount = data.result.matchedOcrCount || 0;
-            currentData.matchedTextCount = data.result.matchedTextCount || 0;
-
-            renderResults();
-            resultsSection.scrollIntoView({ behavior: 'smooth' });
-        };
-
-        const pollJobStatus = (jobId, consecutiveErrors = 0) => {
-            fetch(`index.php?action=job_status&job_id=${encodeURIComponent(jobId)}`, {
-                method: 'GET',
-                cache: 'no-store'
-            })
-            .then(res => {
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}`);
-                }
-                return res.text();
-            })
-            .then(text => {
-                const data = JSON.parse(text.trim());
-                if (data.status === 'running') {
-                    setTimeout(() => pollJobStatus(jobId, 0), 1500);
-                    return;
-                }
-                finishUI();
-                if (data.success && data.result) {
-                    applyResultData(data);
-                } else {
-                    alert('Hata: ' + (data.message || 'Mutabakat işlemi tamamlanamadı.'));
-                }
-            })
-            .catch(err => {
-                if (consecutiveErrors < 15) {
-                    setTimeout(() => pollJobStatus(jobId, consecutiveErrors + 1), 1500);
-                } else {
-                    console.error(err);
-                    finishUI();
-                    alert('İşlem sırasında sunucu bağlantısı kesildi. Lütfen tekrar deneyin.');
-                }
-            });
-        };
 
         const submitRequest = (retryCount = 0) => {
             fetch('index.php?action=reconcile&async=1', {
                 method: 'POST',
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
                 body: formData
             })
-            .then(response => {
-                if (!response.ok && response.status >= 500 && retryCount < 2) {
-                    throw new Error(`RETRY_${response.status}`);
+            .then(async response => {
+                if (response.status === 413) {
+                    finishUI();
+                    reportClientError('submit_413', 'Dosya boyutu limiti aşıldı', { httpStatus: 413 });
+                    alert('Yüklenen dosyaların toplam boyutu sunucu sınırını aşıyor (maks. 128 MB). Lütfen dosyaları bölerek yükleyin.');
+                    return { handled: true };
                 }
-                return response.text();
+                if (response.status === 401) {
+                    finishUI();
+                    reportClientError('submit_401', 'Oturum süresi doldu', { httpStatus: 401 });
+                    alert('Oturum süresi doldu. Lütfen sayfayı yenileyip tekrar giriş yapın.');
+                    return { handled: true };
+                }
+                if (!response.ok && response.status >= 500 && retryCount < 2) {
+                    const retryErr = new Error(`RETRY_${response.status}`);
+                    retryErr.httpStatus = response.status;
+                    throw retryErr;
+                }
+                if (!response.ok) {
+                    const err = new Error(`HTTP ${response.status}`);
+                    err.httpStatus = response.status;
+                    throw err;
+                }
+                const text = await response.text();
+                return { handled: false, text };
             })
-            .then(text => {
-                const cleanedText = text.trim();
+            .then(resObj => {
+                if (!resObj || resObj.handled) {
+                    return;
+                }
+                const cleanedText = (resObj.text || '').trim();
                 const data = JSON.parse(cleanedText);
                 if (data.success && data.async && data.job_id) {
+                    try {
+                        sessionStorage.setItem(ACTIVE_JOB_STORAGE_KEY, JSON.stringify({
+                            job_id: data.job_id,
+                            started_at: Date.now()
+                        }));
+                    } catch (storageErr) {
+                        // sessionStorage kapalıysa sessizce devam et
+                    }
                     setTimeout(() => pollJobStatus(data.job_id, 0), 1000);
                     return;
                 }
                 finishUI();
                 if (data.success && data.result) {
-                    applyResultData(data);
+                    try {
+                        applyResultData(data);
+                    } catch (renderErr) {
+                        console.error(renderErr);
+                        reportClientError('render_error', renderErr?.message || String(renderErr));
+                        alert('Sonuçlar görüntülenirken tarayıcı hatası oluştu.');
+                    }
                 } else {
+                    reportClientError('submit_failed', data.message || 'Bilinmeyen bir hata oluştu.');
                     alert('Hata: ' + (data.message || 'Bilinmeyen bir hata oluştu.'));
                 }
             })
@@ -265,12 +389,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 console.error(err);
                 finishUI();
-                alert('İşlem sırasında beklenmedik bir hata oluştu.');
+                reportClientError('submit_error', err?.message || String(err), { httpStatus: err?.httpStatus || 0 });
+                alert('İşlem sırasında beklenmedik bir hata oluştu. Lütfen tekrar deneyin.');
             });
         };
 
         submitRequest(0);
     });
+
+    // Sayfa yenilendiyse son 30 dakika içinde başlatılmış aktif işi otomatik kurtar
+    try {
+        const savedRaw = sessionStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
+        if (savedRaw) {
+            const saved = JSON.parse(savedRaw);
+            if (saved && saved.job_id && saved.started_at && (Date.now() - saved.started_at) < 1800000) {
+                startLoadingUI((Date.now() - saved.started_at) / 1000);
+                pollJobStatus(saved.job_id, 0);
+            } else {
+                sessionStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+            }
+        }
+    } catch (e) {
+        // sessionStorage okuma hatasını yoksay
+    }
 
     function renderResults() {
         resultsSection.style.display = 'block';
@@ -627,7 +768,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function escapeHtml(text) {
-        return text
+        return String(text ?? '')
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")

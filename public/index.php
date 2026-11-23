@@ -14,6 +14,8 @@ if (PHP_SAPI === 'cli' && isset($argv) && is_array($argv)) {
             @set_time_limit(1800);
             $jobDir = dirname(__DIR__) . '/var/tmp/job_' . $cliJobId;
             $jobFile = $jobDir . '/job.json';
+            $finalResultFile = $jobDir . '/result.json';
+            $progressFile = $jobDir . '/progress.json';
             if (!is_file($jobFile)) {
                 exit(1);
             }
@@ -27,6 +29,28 @@ if (PHP_SAPI === 'cli' && isset($argv) && is_array($argv)) {
             $excelPath = (string)($jobMeta['excel_path'] ?? '');
             $pdfPaths = (array)($jobMeta['pdf_paths'] ?? []);
             $pdfOriginalFilenames = (array)($jobMeta['pdf_original_filenames'] ?? []);
+
+            register_shutdown_function(function () use ($cliJobId, $finalResultFile, $jobDir): void {
+                $err = error_get_last();
+                if ($err !== null && in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true) && !is_file($finalResultFile)) {
+                    \App\Logger::error("CLI Worker Fatal (job={$cliJobId}): {$err['message']} in {$err['file']}:{$err['line']}");
+                    $tmpFailFile = $jobDir . '/result.json.tmp';
+                    $failPayload = [
+                        'success' => false,
+                        'status' => 'failed',
+                        'message' => 'İşlem sırasında beklenmedik sunucu hatası oluştu. Teknik ekip bilgilendirildi.',
+                    ];
+                    if (@file_put_contents($tmpFailFile, json_encode($failPayload, JSON_UNESCAPED_UNICODE)) !== false) {
+                        @rename($tmpFailFile, $finalResultFile);
+                    }
+                }
+            });
+
+            @file_put_contents($progressFile, json_encode([
+                'stage' => 'processing',
+                'total_pdfs' => count($pdfPaths),
+                'updated_at' => time(),
+            ], JSON_UNESCAPED_UNICODE));
 
             try {
                 $excelExtractor = new \App\ExcelExtractor();
@@ -64,13 +88,16 @@ if (PHP_SAPI === 'cli' && isset($argv) && is_array($argv)) {
                     'elapsed_time' => $elapsed,
                 ];
             } catch (\Throwable $e) {
-                \App\Logger::log("HATA OLUŞTU: [" . get_class($e) . "] " . $e->getMessage() . " | Yer: " . $e->getFile() . ":" . $e->getLine());
+                \App\Logger::error("HATA OLUŞTU (job={$cliJobId}): [" . get_class($e) . "] " . $e->getMessage() . " | Yer: " . $e->getFile() . ":" . $e->getLine());
                 $payload = [
                     'success' => false,
                     'status' => 'failed',
                     'message' => $e->getMessage(),
                 ];
             } finally {
+                if (is_file($progressFile)) {
+                    @unlink($progressFile);
+                }
                 if ($excelPath !== '' && is_file($excelPath)) {
                     @unlink($excelPath);
                 }
@@ -82,7 +109,6 @@ if (PHP_SAPI === 'cli' && isset($argv) && is_array($argv)) {
             }
 
             $tmpResultFile = $jobDir . '/result.json.tmp';
-            $finalResultFile = $jobDir . '/result.json';
             file_put_contents($tmpResultFile, json_encode($payload, JSON_UNESCAPED_UNICODE));
             @rename($tmpResultFile, $finalResultFile);
             exit(0);
@@ -121,6 +147,7 @@ $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
     || (($_SERVER['SERVER_PORT'] ?? 80) == 443);
 
 if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
+    ini_set('session.gc_maxlifetime', '28800');
     session_name('HBC_MUTABAKAT_SESSID');
     ini_set('session.name', 'HBC_MUTABAKAT_SESSID');
     session_set_cookie_params([
@@ -229,10 +256,17 @@ $isAuthenticated = !empty($_SESSION['hbc_auth']);
 if (!$isAuthenticated) {
     $isLoginAttempt = ($_SERVER['REQUEST_METHOD'] === 'POST' && (($_GET['action'] ?? '') === 'login' || isset($_POST['password'])));
     $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest');
+    $actionParam = (string)($_GET['action'] ?? '');
+    $isJsonAction = in_array($actionParam, ['reconcile', 'job_status', 'client_error', 'get-report'], true);
 
-    if (!$isLoginAttempt && ($_SERVER['REQUEST_METHOD'] === 'POST' || $isAjax)) {
+    if (!$isLoginAttempt && ($_SERVER['REQUEST_METHOD'] === 'POST' || $isAjax || $isJsonAction)) {
         header('Content-Type: application/json; charset=utf-8', true, 401);
-        echo json_encode(['success' => false, 'message' => 'Oturum süresi doldu veya yetkisiz erişim. Lütfen giriş yapın.']);
+        echo json_encode([
+            'success' => false,
+            'status' => 'auth_expired',
+            'auth_expired' => true,
+            'message' => 'Oturum süresi doldu veya yetkisiz erişim. Lütfen sayfayı yenileyip tekrar giriş yapın.',
+        ], JSON_UNESCAPED_UNICODE);
         exit;
     }
 ?>
@@ -409,6 +443,39 @@ if (!is_dir($config['upload_dir'])) {
 
 $action = $_GET['action'] ?? '';
 
+// Handle Client-Side Error Telemetry (so watcher catches silent client/network failures)
+if ($action === 'client_error' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    session_write_close();
+    header('Content-Type: application/json; charset=utf-8');
+    $rawBody = (string)file_get_contents('php://input', false, null, 0, 4096);
+    $payload = json_decode($rawBody, true);
+    if (!is_array($payload)) {
+        $payload = [];
+    }
+    $sanitize = static function ($val, int $maxLen = 300): string {
+        $str = preg_replace('/[\r\n\t]+/', ' ', trim((string)$val)) ?? '';
+        return mb_substr($str, 0, $maxLen);
+    };
+    $errType = $sanitize($payload['type'] ?? 'unknown', 64);
+    $errJobId = $sanitize($payload['job_id'] ?? '', 64);
+    $errHttp = (int)($payload['http_status'] ?? 0);
+    $errElapsed = (int)($payload['elapsed_sec'] ?? 0);
+    $errMsg = $sanitize($payload['message'] ?? '', 300);
+    $clientIp = $sanitize($_SERVER['REMOTE_ADDR'] ?? 'unknown', 64);
+
+    \App\Logger::error(sprintf(
+        '[ClientError] type=%s | job=%s | http=%d | elapsed=%ds | ip=%s | msg=%s',
+        $errType !== '' ? $errType : 'unknown',
+        $errJobId !== '' ? $errJobId : '-',
+        $errHttp,
+        $errElapsed,
+        $clientIp,
+        $errMsg
+    ));
+    echo json_encode(['success' => true]);
+    exit;
+}
+
 // Handle Job Status Polling for Async Reconciliation
 if ($action === 'job_status') {
     session_write_close();
@@ -424,14 +491,11 @@ if ($action === 'job_status') {
     $jobDir = dirname(__DIR__) . '/var/tmp/job_' . $jobId;
     $resultFile = $jobDir . '/result.json';
     $jobFile = $jobDir . '/job.json';
+    $progressFile = $jobDir . '/progress.json';
 
     if (is_file($resultFile)) {
         $raw = (string)file_get_contents($resultFile);
-        @unlink($resultFile);
-        @unlink($jobFile);
-        @unlink($jobDir . '/worker.log');
-        @unlink($jobDir . '/worker.pid');
-        @rmdir($jobDir);
+        @touch($resultFile);
         echo $raw;
         exit;
     }
@@ -443,26 +507,37 @@ if ($action === 'job_status') {
 
     // Check if background worker exited unexpectedly without writing result.json
     $pidFile = $jobDir . '/worker.pid';
-    if (is_file($pidFile)) {
+    $jobAge = time() - (int)@filemtime($jobFile);
+    if ($jobAge >= 3 && is_file($pidFile)) {
         $pid = (int)trim((string)file_get_contents($pidFile));
         if ($pid > 0 && is_dir('/proc') && !is_dir('/proc/' . $pid)) {
             usleep(200000); // Wait 200ms in case result.json was just being renamed
             if (is_file($resultFile)) {
                 $raw = (string)file_get_contents($resultFile);
-                @unlink($resultFile);
-                @unlink($jobFile);
-                @unlink($jobDir . '/worker.log');
-                @unlink($pidFile);
-                @rmdir($jobDir);
+                @touch($resultFile);
                 echo $raw;
                 exit;
             }
+            $workerLogFile = $jobDir . '/worker.log';
+            $workerLogExcerpt = '';
+            if (is_file($workerLogFile)) {
+                $logContent = (string)@file_get_contents($workerLogFile);
+                $workerLogExcerpt = preg_replace('/[\r\n]+/', ' ', trim(substr($logContent, -500))) ?? '';
+            }
+            \App\Logger::error("Arka plan OCR işçisi beklenmedik şekilde sonlandı (job={$jobId}, pid={$pid}): " . $workerLogExcerpt);
             echo json_encode(['success' => false, 'status' => 'failed', 'message' => 'Arka plan OCR işlemi beklenmedik şekilde sonlandı.']);
             exit;
         }
     }
 
-    echo json_encode(['success' => true, 'status' => 'running']);
+    $response = ['success' => true, 'status' => 'running'];
+    if (is_file($progressFile)) {
+        $progressData = json_decode((string)@file_get_contents($progressFile), true);
+        if (is_array($progressData)) {
+            $response['progress'] = $progressData;
+        }
+    }
+    echo json_encode($response, JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -485,6 +560,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
     \App\Logger::log("MUTABAKAT BAŞLADI - Plaka/Mağaza: " . ($_POST['store_name'] ?? 'Belirtilmemiş'));
     
     try {
+        $contentLength = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+        if (empty($_FILES) && $contentLength > 0) {
+            \App\Logger::error("Upload boyut sınırı aşıldı (CONTENT_LENGTH={$contentLength})");
+            echo json_encode(['success' => false, 'message' => 'Yüklenen dosyaların toplam boyutu sunucu sınırını aşıyor. Lütfen dosyaları bölerek yükleyin.']);
+            exit;
+        }
+
         if (!isset($_FILES['excel_file']) || !isset($_FILES['pdf_file'])) {
             echo json_encode(['success' => false, 'message' => 'Lütfen hem Excel/CSV hem de PDF dosyasını yükleyin.']);
             exit;
@@ -494,7 +576,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         $pdfFile = $_FILES['pdf_file'];
 
         if ($excelFile['error'] !== UPLOAD_ERR_OK) {
-            echo json_encode(['success' => false, 'message' => 'Excel/CSV dosyası yüklenirken hata oluştu.']);
+            \App\Logger::error("Excel dosyası yükleme hatası (UPLOAD_ERR={$excelFile['error']})");
+            echo json_encode(['success' => false, 'message' => 'Excel/CSV dosyası yüklenirken hata oluştu (Kod: ' . (int)$excelFile['error'] . ').']);
             exit;
         }
 
@@ -503,7 +586,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         if (is_array($pdfFile['error'])) {
             foreach ($pdfFile['error'] as $key => $error) {
                 if ($error !== UPLOAD_ERR_OK) {
-                    echo json_encode(['success' => false, 'message' => 'PDF dosyalarından biri yüklenirken hata oluştu.']);
+                    \App\Logger::error("PDF dosyası yükleme hatası (dosya=" . ($pdfFile['name'][$key] ?? '?') . ", UPLOAD_ERR={$error})");
+                    echo json_encode(['success' => false, 'message' => 'PDF dosyalarından biri yüklenirken hata oluştu (Kod: ' . (int)$error . ').']);
                     exit;
                 }
                 $origName = $pdfFile['name'][$key];
@@ -517,7 +601,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
             }
         } else {
             if ($pdfFile['error'] !== UPLOAD_ERR_OK) {
-                echo json_encode(['success' => false, 'message' => 'PDF dosyası yüklenirken hata oluştu.']);
+                \App\Logger::error("PDF dosyası yükleme hatası (dosya=" . ($pdfFile['name'] ?? '?') . ", UPLOAD_ERR={$pdfFile['error']})");
+                echo json_encode(['success' => false, 'message' => 'PDF dosyası yüklenirken hata oluştu (Kod: ' . (int)$pdfFile['error'] . ').']);
                 exit;
             }
             $origName = $pdfFile['name'];
@@ -547,8 +632,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         // Async Background Worker Mode (Prevents 502 Bad Gateway on PHP-FPM reloads / long OCR runs)
         $isAsyncRequested = !empty($_GET['async']) || !empty($_POST['async']);
         if ($isAsyncRequested && PHP_OS_FAMILY !== 'Windows') {
+            $tmpRoot = dirname(__DIR__) . '/var/tmp';
+            $oldJobDirs = @glob($tmpRoot . '/job_*') ?: [];
+            $cleanedCount = 0;
+            $staleCutoff = time() - 7200;
+            foreach ($oldJobDirs as $oldDir) {
+                if ($cleanedCount >= 10 || !is_dir($oldDir)) {
+                    break;
+                }
+                $oldResult = $oldDir . '/result.json';
+                if (is_file($oldResult) && (int)@filemtime($oldResult) < $staleCutoff) {
+                    foreach (glob($oldDir . '/*') ?: [] as $f) {
+                        if (is_file($f)) {
+                            @unlink($f);
+                        }
+                    }
+                    @rmdir($oldDir);
+                    $cleanedCount++;
+                }
+            }
+
             $jobId = bin2hex(random_bytes(12));
-            $jobDir = dirname(__DIR__) . '/var/tmp/job_' . $jobId;
+            $jobDir = $tmpRoot . '/job_' . $jobId;
             if (@mkdir($jobDir, 0750, true)) {
                 $excelExt = strtolower(pathinfo((string)($excelFile['name'] ?? 'file.xlsx'), PATHINFO_EXTENSION)) ?: 'xlsx';
                 $savedExcelPath = $jobDir . '/input_excel.' . $excelExt;
@@ -594,6 +699,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
                         ]);
                         exit;
                     }
+                    \App\Logger::error("Async worker başlatılamadı (job={$jobId})");
                 }
             }
         }
@@ -644,7 +750,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'reconcile') {
         ]);
         exit;
     } catch (\Throwable $e) {
-        \App\Logger::log("HATA OLUŞTU: [" . get_class($e) . "] " . $e->getMessage() . " | Yer: " . $e->getFile() . ":" . $e->getLine());
+        \App\Logger::error("HATA OLUŞTU: [" . get_class($e) . "] " . $e->getMessage() . " | Yer: " . $e->getFile() . ":" . $e->getLine());
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
         exit;
     }

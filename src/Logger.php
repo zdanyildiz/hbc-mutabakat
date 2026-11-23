@@ -30,4 +30,9 @@ class Logger
             @chmod((string)self::$logFile, 0666);
         }
     }
+
+    public static function error(string $message): void
+    {
+        self::log('[ERROR] ' . $message);
+    }
 }
