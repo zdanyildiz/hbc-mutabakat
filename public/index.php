@@ -476,9 +476,10 @@ if ($action === 'client_error' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-// Handle Job Status Polling for Async Reconciliation
+// Handle Job Status Polling for Async Reconciliation (with optional long-polling)
 if ($action === 'job_status') {
     session_write_close();
+    ignore_user_abort(false);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
@@ -492,42 +493,55 @@ if ($action === 'job_status') {
     $resultFile = $jobDir . '/result.json';
     $jobFile = $jobDir . '/job.json';
     $progressFile = $jobDir . '/progress.json';
-
-    if (is_file($resultFile)) {
-        $raw = (string)file_get_contents($resultFile);
-        @touch($resultFile);
-        echo $raw;
-        exit;
-    }
-
-    if (!is_file($jobFile)) {
-        echo json_encode(['success' => false, 'status' => 'failed', 'message' => 'İşlem kaydı bulunamadı veya süresi doldu.']);
-        exit;
-    }
-
-    // Check if background worker exited unexpectedly without writing result.json
     $pidFile = $jobDir . '/worker.pid';
-    $jobAge = time() - (int)@filemtime($jobFile);
-    if ($jobAge >= 3 && is_file($pidFile)) {
-        $pid = (int)trim((string)file_get_contents($pidFile));
-        if ($pid > 0 && is_dir('/proc') && !is_dir('/proc/' . $pid)) {
-            usleep(200000); // Wait 200ms in case result.json was just being renamed
-            if (is_file($resultFile)) {
-                $raw = (string)file_get_contents($resultFile);
-                @touch($resultFile);
-                echo $raw;
-                exit;
-            }
-            $workerLogFile = $jobDir . '/worker.log';
-            $workerLogExcerpt = '';
-            if (is_file($workerLogFile)) {
-                $logContent = (string)@file_get_contents($workerLogFile);
-                $workerLogExcerpt = preg_replace('/[\r\n]+/', ' ', trim(substr($logContent, -500))) ?? '';
-            }
-            \App\Logger::error("Arka plan OCR işçisi beklenmedik şekilde sonlandı (job={$jobId}, pid={$pid}): " . $workerLogExcerpt);
-            echo json_encode(['success' => false, 'status' => 'failed', 'message' => 'Arka plan OCR işlemi beklenmedik şekilde sonlandı.']);
+
+    $waitSec = min(15, max(0, (int)($_GET['wait'] ?? 0)));
+    $deadline = microtime(true) + $waitSec;
+
+    while (true) {
+        clearstatcache(true, $resultFile);
+        if (is_file($resultFile)) {
+            $raw = (string)file_get_contents($resultFile);
+            @touch($resultFile);
+            echo $raw;
             exit;
         }
+
+        clearstatcache(true, $jobFile);
+        if (!is_file($jobFile)) {
+            echo json_encode(['success' => false, 'status' => 'failed', 'message' => 'İşlem kaydı bulunamadı veya süresi doldu.']);
+            exit;
+        }
+
+        // Check if background worker exited unexpectedly without writing result.json
+        $jobAge = time() - (int)@filemtime($jobFile);
+        if ($jobAge >= 3 && is_file($pidFile)) {
+            $pid = (int)trim((string)file_get_contents($pidFile));
+            if ($pid > 0 && is_dir('/proc') && !is_dir('/proc/' . $pid)) {
+                usleep(200000); // Wait 200ms in case result.json was just being renamed
+                clearstatcache(true, $resultFile);
+                if (is_file($resultFile)) {
+                    $raw = (string)file_get_contents($resultFile);
+                    @touch($resultFile);
+                    echo $raw;
+                    exit;
+                }
+                $workerLogFile = $jobDir . '/worker.log';
+                $workerLogExcerpt = '';
+                if (is_file($workerLogFile)) {
+                    $logContent = (string)@file_get_contents($workerLogFile);
+                    $workerLogExcerpt = preg_replace('/[\r\n]+/', ' ', trim(substr($logContent, -500))) ?? '';
+                }
+                \App\Logger::error("Arka plan OCR işçisi beklenmedik şekilde sonlandı (job={$jobId}, pid={$pid}): " . $workerLogExcerpt);
+                echo json_encode(['success' => false, 'status' => 'failed', 'message' => 'Arka plan OCR işlemi beklenmedik şekilde sonlandı.']);
+                exit;
+            }
+        }
+
+        if (microtime(true) >= $deadline || connection_aborted() !== 0) {
+            break;
+        }
+        sleep(1);
     }
 
     $response = ['success' => true, 'status' => 'running'];

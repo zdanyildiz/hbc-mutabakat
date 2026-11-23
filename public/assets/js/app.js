@@ -221,9 +221,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const pollJobStatus = (jobId, consecutiveErrors = 0) => {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 25000);
+        const timeoutId = setTimeout(() => controller.abort(), 35000);
 
-        fetch(`index.php?action=job_status&job_id=${encodeURIComponent(jobId)}`, {
+        fetch(`index.php?action=job_status&job_id=${encodeURIComponent(jobId)}&wait=15`, {
             method: 'GET',
             cache: 'no-store',
             headers: {
@@ -275,7 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (liveTimer && data.progress && data.progress.total_pdfs) {
                     liveTimer.dataset.progressText = `${data.progress.total_pdfs} PDF işleniyor`;
                 }
-                setTimeout(() => pollJobStatus(jobId, 0), 1500);
+                setTimeout(() => pollJobStatus(jobId, 0), 2000);
                 return;
             }
 
@@ -297,8 +297,8 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .catch(err => {
             clearTimeout(timeoutId);
-            if (consecutiveErrors < 60) {
-                const backoffMs = Math.min(4000, 1500 + consecutiveErrors * 250);
+            if (consecutiveErrors < 45) {
+                const backoffMs = Math.min(8000, 3000 + consecutiveErrors * 500);
                 setTimeout(() => pollJobStatus(jobId, consecutiveErrors + 1), backoffMs);
             } else {
                 console.error(err);
@@ -365,7 +365,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     } catch (storageErr) {
                         // sessionStorage kapalıysa sessizce devam et
                     }
-                    setTimeout(() => pollJobStatus(data.job_id, 0), 1000);
+                    setTimeout(() => pollJobStatus(data.job_id, 0), 2000);
                     return;
                 }
                 finishUI();
