@@ -383,7 +383,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             })
             .catch(err => {
-                if (retryCount < 2 && String(err.message || '').startsWith('RETRY_')) {
+                const isTransientFetchError = !err?.httpStatus && err?.name !== 'AbortError';
+                if (retryCount < 2 && (String(err?.message || '').startsWith('RETRY_') || isTransientFetchError)) {
                     setTimeout(() => submitRequest(retryCount + 1), 1500);
                     return;
                 }

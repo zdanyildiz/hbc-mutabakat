@@ -463,7 +463,11 @@ if ($action === 'client_error' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $errMsg = $sanitize($payload['message'] ?? '', 300);
     $clientIp = $sanitize($_SERVER['REMOTE_ADDR'] ?? 'unknown', 64);
 
-    \App\Logger::error(sprintf(
+    $isClientNetworkDrop = $errHttp === 0 && (
+        in_array($errType, ['submit_error', 'poll_connection_lost'], true)
+        || (bool)preg_match('/Failed to fetch|NetworkError|Load failed|aborted/i', $errMsg)
+    );
+    $logLine = sprintf(
         '[ClientError] type=%s | job=%s | http=%d | elapsed=%ds | ip=%s | msg=%s',
         $errType !== '' ? $errType : 'unknown',
         $errJobId !== '' ? $errJobId : '-',
@@ -471,7 +475,12 @@ if ($action === 'client_error' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $errElapsed,
         $clientIp,
         $errMsg
-    ));
+    );
+    if ($isClientNetworkDrop) {
+        \App\Logger::warning($logLine);
+    } else {
+        \App\Logger::error($logLine);
+    }
     echo json_encode(['success' => true]);
     exit;
 }

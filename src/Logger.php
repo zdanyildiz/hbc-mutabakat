@@ -31,6 +31,11 @@ class Logger
         }
     }
 
+    public static function warning(string $message): void
+    {
+        self::log('[WARNING] ' . $message);
+    }
+
     public static function error(string $message): void
     {
         self::log('[ERROR] ' . $message);
